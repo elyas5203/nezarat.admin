@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>پنل مدیریت - سیستم نظارت</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <div class="container">
+        <!-- بخش ورود ادمین -->
+        <div id="adminLoginSection">
+            <h1>ورود به پنل مدیریت</h1>
+            <div>
+                <label for="adminUsername">نام کاربری ادمین:</label>
+                <input type="text" id="adminUsername" required>
+            </div>
+            <div class="password-wrapper">
+                <label for="adminPassword">رمز عبور ادمین:</label>
+                <input type="password" id="adminPassword" required>
+                <button type="button" id="toggleAdminPassword" class="toggle-password" onclick="togglePasswordVisibility('adminPassword', this)">نمایش</button>
+            </div>
+            <button onclick="handleAdminLogin()">ورود ادمین</button>
+            <div id="adminLoginMessageArea" class="messageArea hidden"></div>
+        </div>
+
+        <!-- داشبورد ادمین - در ابتدا مخفی -->
+        <div id="adminDashboardSection" class="hidden admin-section">
+            <div class="dashboard-header">
+                <h2 style="margin-bottom:0; text-align:right;">داشبورد ادمین</h2>
+                <button onclick="adminLogout()" class="btn-danger btn-logout">خروج</button>
+            </div>
+            <p id="adminWelcomeMessage" style="text-align:center; margin-bottom:1.5rem; font-size:1.05rem;">خوش آمدید، ادمین گرامی!</p>
+            
+            <div id="adminMenu">
+                <button onclick="showAdminSectionContent('adminClassManagementSection')" id="navClassManagement" class="active">مدیریت کلاس‌ها</button>
+                <button onclick="showAdminSectionContent('adminUserManagementSection')" id="navUserManagement">مدیریت کاربران</button>
+                <button onclick="showAdminSectionContent('adminVisitAssignmentsSection')" id="navVisitAssignments">تخصیص بازدیدها</button> 
+                <button onclick="showAdminSectionContent('adminViewResultsSection')" id="navViewResults">مشاهده نتایج</button>
+                <button onclick="showAdminSectionContent('adminAnalyticsSection')" id="navAnalytics">تحلیل آماری جزئی</button>
+                <button onclick="showAdminSectionContent('adminTrendAnalysisSection')" id="navTrendAnalysis">تحلیل روند پیشرفت</button> <!-- دکمه جدید -->
+            </div>
+
+            <div id="adminContentArea">
+                <!-- بخش مدیریت کلاس‌ها -->
+                <div id="adminClassManagementSection" class="admin-content-section">
+                    <h3>کلاس‌ها</h3>
+                    <div class="form-container">
+                        <h4>افزودن کلاس جدید</h4>
+                        <div><label for="newClassCode">کد کلاس (منحصر به فرد):</label><input type="text" id="newClassCode" placeholder="مثال: C101"></div>
+                        <div><label for="newClassName">نام نمایشی کلاس:</label><input type="text" id="newClassName" placeholder="مثال: ریاضی دهم - شعبه ۱"></div>
+                        <button onclick="addNewClass()">ثبت کلاس جدید</button>
+                        <div id="addClassMessageArea" class="messageArea hidden"></div>
+                    </div>
+                    <hr>
+                    <h4>لیست کلاس‌ها</h4>
+                    <div id="classList" class="card-grid">
+                        <p class="no-data-message">در حال بارگذاری لیست کلاس‌ها...</p>
+                    </div>
+                </div>
+
+                <!-- بخش مدیریت کاربران -->
+                <div id="adminUserManagementSection" class="admin-content-section hidden">
+                    <h3>کاربران</h3>
+                    <div class="form-container">
+                        <h4>افزودن کاربر جدید</h4>
+                        <div><label for="newUserId">نام کاربری (انگلیسی، بدون فاصله):</label><input type="text" id="newUserId" placeholder="مثال: user.name"></div>
+                        <div><label for="newUserDisplayName">نام نمایشی کاربر:</label><input type="text" id="newUserDisplayName" placeholder="مثال: جناب آقای رضایی"></div>
+                        <div class="password-wrapper">
+                            <label for="newUserPassword">رمز عبور:</label>
+                            <input type="password" id="newUserPassword">
+                            <button type="button" class="toggle-password" onclick="togglePasswordVisibility('newUserPassword', this)">نمایش</button>
+                        </div>
+                        <div><label for="newUserEmail">ایمیل (اختیاری):</label><input type="email" id="newUserEmail" placeholder="user@example.com"></div>
+                        <button onclick="addNewUserByAdmin()">ثبت کاربر جدید</button>
+                        <div id="addUserMessageArea" class="messageArea hidden"></div>
+                    </div>
+                    <hr>
+                    <h4>لیست کاربران</h4>
+                    <div id="usersListContainer" class="card-grid">
+                        <p class="no-data-message">در حال بارگذاری لیست کاربران...</p>
+                    </div>
+                </div>
+
+                <!-- بخش لیست بازدیدهای تخصیص داده شده -->
+                <div id="adminVisitAssignmentsSection" class="admin-content-section hidden"> 
+                    <h3>لیست بازدیدهای تخصیص داده شده</h3>
+                    <div class="controls-bar">
+                        <button onclick="loadVisitAssignments()" class="btn-secondary">بارگذاری/به‌روزرسانی لیست</button>
+                    </div>
+                    <div id="visitAssignmentsTableContainer" class="table-responsive">
+                        <p class="no-data-message">برای مشاهده لیست، روی دکمه "بارگذاری/به‌روزرسانی لیست" کلیک کنید.</p>
+                    </div>
+                    <div id="visitAssignmentsMessageArea" class="messageArea hidden"></div>
+                </div>
+
+                <!-- بخش مشاهده نتایج یک بازدید خاص -->
+                <div id="adminViewResultsSection" class="admin-content-section hidden">
+                    <h3>مشاهده نتایج بازدید</h3>
+                    <div class="form-container">
+                        <div><label for="viewResultsClassCode">کد کلاس:</label><input type="text" id="viewResultsClassCode" ></div>
+                        <div><label for="viewResultsVisitPassword">پسورد بازدید:</label><input type="text" id="viewResultsVisitPassword" ></div>
+                        <button onclick="viewResults()">نمایش نتایج</button>
+                        <div id="viewResultsMessageArea" class="messageArea hidden"></div>
+                    </div>
+                </div>
+                
+                <!-- بخش تحلیل آماری جزئی (نمودارهای دایره‌ای و میله‌ای برای یک بازدید یا تجمیع یک کلاس) -->
+                <div id="adminAnalyticsSection" class="admin-content-section hidden">
+                    <h3>تحلیل آماری جزئی</h3>
+                    <div id="analyticsControls" class="controls-container">
+                         <div class="control-group">
+                            <label for="analyticsClassCodeSelect">انتخاب کلاس:</label>
+                            <select id="analyticsClassCodeSelect">
+                                <option value="">-- انتخاب کنید --</option>
+                                <!-- گزینه ها توسط جاوااسکریپت پر می‌شوند -->
+                            </select>
+                        </div>
+                        <div class="control-group" id="visitPasswordControlGroupAnalytics">
+                            <label for="analyticsVisitPassword">پسورد بازدید (اختیاری برای تحلیل یک بازدید خاص):</label>
+                            <input type="text" id="analyticsVisitPassword" placeholder="فقط تحلیل این بازدید">
+                        </div>
+                        <button onclick="loadAnalyticsData(false)" class="btn-secondary">بارگذاری تحلیل جزئی</button>
+                    </div>
+                    <div id="analyticsDisplayArea" class="charts-grid">
+                        <p class="no-data-message"><em>لطفاً یک کلاس را برای مشاهده تحلیل انتخاب کنید.</em></p>
+                    </div>
+                    <div id="analyticsMessageArea" class="messageArea hidden"></div>
+                </div>
+
+                <!-- بخش جدید: تحلیل روند پیشرفت -->
+                <div id="adminTrendAnalysisSection" class="admin-content-section hidden">
+                    <h3>تحلیل روند پیشرفت</h3>
+                    <div id="trendAnalysisControls" class="controls-container">
+                        <div class="control-group">
+                            <label for="trendClassCodeSelect">انتخاب کلاس برای تحلیل روند:</label>
+                            <select id="trendClassCodeSelect">
+                                <option value="">-- انتخاب کلاس --</option>
+                                <option value="ALL_CLASSES_TREND">--- روند کلی همه کلاس‌ها (تجمیع ماهانه) ---</option>
+                                <!-- سایر کلاس‌ها توسط جاوااسکریپت پر می‌شوند -->
+                            </select>
+                        </div>
+                        <!-- میتوان کنترل‌های دیگری مانند انتخاب معیار یا بازه زمانی اضافه کرد -->
+                        <button onclick="loadTrendAnalysisData()" class="btn-primary">نمایش نمودارهای روند</button>
+                    </div>
+                    <div id="trendAnalysisDisplayArea" class="charts-grid" style="margin-top: 1.5rem;">
+                        <p class="no-data-message"><em>لطفاً یک کلاس (یا گزینه همه کلاس‌ها) را برای مشاهده روند پیشرفت انتخاب کنید.</em></p>
+                    </div>
+                    <div id="trendAnalysisMessageArea" class="messageArea hidden"></div>
+                </div>
+
+            </div>
+            
+            <!-- بخش نمایش فرم تکمیل شده (برای مشاهده توسط ادمین) -->
+            <div id="resultsViewerSection" class="hidden results-viewer-container">
+                <div class="viewer-header">
+                    <h3 id="resultsViewerTitle">فرم تکمیل شده بازدید</h3>
+                    <button onclick="hideResultsViewer()" class="btn-secondary btn-close-viewer">× بازگشت</button>
+                </div>
+                <p id="adminFormViewInfo" class="form-view-info"></p>
+                <div id="formDisplayForAdminNav" class="form-navigation-viewer">
+                </div>
+                <div id="formDisplayForAdmin" class="form-content-viewer user-form-section">
+                </div>
+                <div class="viewer-actions">
+                    <button onclick="generatePdfFromView()" id="downloadPdfButton" class="btn-success hidden">دانلود PDF</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- مودال تخصیص بازدید -->
+        <div id="assignVisitModal" class="modal">
+            <div class="modal-content">
+                <span class="close-button" onclick="closeAssignVisitModal()">×</span>
+                <div class="modal-header">
+                    <h4 id="assignVisitModalTitle">صدور و تخصیص پسورد بازدید</h4>
+                </div>
+                <div class="modal-body">
+                    <div>
+                        <label for="assignUserSearchInput">جستجوی کاربر (نام یا نام کاربری):</label>
+                        <input type="text" id="assignUserSearchInput" onkeyup="filterAssignUserDropdown()" placeholder="برای فیلتر کردن تایپ کنید...">
+                    </div>
+                    <div>
+                        <label for="assignToUserSelect" style="margin-top:0.5rem;">تخصیص به کاربر:</label>
+                        <select id="assignToUserSelect" size="5" style="height: auto; min-height:100px;"> 
+                            <option value="">-- بازدید عمومی (بدون کاربر خاص) --</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button onclick="confirmGenerateVisitPassword()" class="btn-success" style="width:100%;">تأیید و صدور پسورد</button>
+                    <div id="assignVisitModalMessageArea" class="messageArea hidden" style="margin-top:0.75rem;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>
