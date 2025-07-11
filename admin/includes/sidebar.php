@@ -116,19 +116,48 @@ function is_active_menu($target_dir, $target_page = null) {
                 </ul>
             </li>
 
+            <li class="has-submenu <?php echo is_active_menu('inservice', null, true) ? 'active open' : ''; ?>">
+                <a href="#">
+                     <svg class="menu-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                        <path d="M8 14h.01"></path>
+                        <path d="M12 14h.01"></path>
+                        <path d="M16 14h.01"></path>
+                        <path d="M8 18h.01"></path>
+                        <path d="M12 18h.01"></path>
+                        <path d="M16 18h.01"></path>
+                    </svg>
+                    <span>ضمن خدمت</span>
+                    <svg class="submenu-arrow" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </a>
+                <ul class="submenu" <?php echo is_active_menu('inservice') ? 'style="display:block;"' : ''; ?>>
+                    <li class="<?php echo is_active_menu('inservice', 'index.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/index.php">داشبورد/تقویم</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'events.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/events.php">مدیریت رویدادها</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'checklists_templates.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/checklists_templates.php">قالب‌های چک‌لیست</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'event_checklists.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/event_checklists.php">چک‌لیست رویدادها</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'attendance.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/attendance.php">حضور و غیاب</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'content.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/content.php">مدیریت محتوا</a>
+                    </li>
+                </ul>
+            </li>
+
             <!-- Placeholder for future menu items -->
             <!--
             <li class="menu-separator"><hr></li>
-            <li>
-                <a href="#">
-                    <svg class="menu-icon" ...></svg>
-                    <span>گزارشات</span>
-                </a>
-            </li>
-            -->
-        </ul>
-    </nav>
-    <div class="sidebar-footer">
         <small>&copy; <?php echo to_jalali(date('Y-m-d'), 'yyyy'); ?> سامانه دبستان</small>
     </div>
 </aside>

@@ -1,134 +1,167 @@
 <?php
-// admin/inservice/content.php
-require_once __DIR__ . '/../includes/header.php'; // Handles session, db, auth
+// admin/inservice/content.php - Manage Content for In-Service Events
+require_once __DIR__ . '/../includes/header.php';
 
-$event_id_for_content = null;
-$event_data_content = null;
-$event_files_db = [];
-$errors_cont = [];
+// Placeholder data
+$sample_inservice_events_for_content = [
+    ['EventID' => 1, 'EventName' => 'کارگاه خلاقیت در تدریس - ۱۴۰۳/۰۲/۱۵'],
+    ['EventID' => 2, 'EventName' => 'جلسه هم‌اندیشی ماهانه - ۱۴۰۳/۰۳/۰۱'],
+];
 
-if (!isset($_GET['event_id']) || !is_numeric($_GET['event_id'])) {
-    $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'شناسه رویداد نامعتبر است.'];
-    header("Location: events.php"); exit;
-}
-$event_id_for_content = (int)$_GET['event_id'];
-$csrf_token_content = generate_csrf_token('inservice_content_action_' . $event_id_for_content);
+$sample_event_content = [
+    1 => [ // Content for EventID 1
+        ['ContentID' => 101, 'FileName' => 'جزوه_خلاقیت_بخش_اول.pdf', 'UploadDate' => '۱۴۰۳/۰۲/۱۴', 'UploadedBy' => 'ادمین سیستم', 'Description' => 'اسلایدهای ارائه شده در بخش اول کارگاه', 'AccessLevel' => 'عمومی', 'FileSize' => '2.5 MB'],
+        ['ContentID' => 102, 'FileName' => 'ویدیو_جلسه_پرسش_پاسخ.mp4', 'UploadDate' => '۱۴۰۳/۰۲/۱۶', 'UploadedBy' => 'ادمین سیستم', 'Description' => 'ضبط شده از بخش پرسش و پاسخ کارگاه', 'AccessLevel' => 'فقط حاضرین', 'FileSize' => '150 MB'],
+    ],
+    2 => [ // Content for EventID 2
+        ['ContentID' => 201, 'FileName' => 'خلاصه_نکات_جلسه_هم_اندیشی.docx', 'UploadDate' => '۱۴۰۳/۰۳/۰۲', 'UploadedBy' => 'ادمین سیستم', 'Description' => 'مهمترین نکات مطرح شده در جلسه', 'AccessLevel' => 'با درخواست', 'FileSize' => '0.8 MB'],
+    ],
+];
 
-$stmt_event_cont = $conn->prepare("SELECT EventID, EventName, EventDate FROM EventCalendar WHERE EventID = ?");
-if ($stmt_event_cont) {
-    $stmt_event_cont->bind_param("i", $event_id_for_content); $stmt_event_cont->execute(); $res_evt_cont = $stmt_event_cont->get_result();
-    if ($res_evt_cont->num_rows === 1) $event_data_content = $res_evt_cont->fetch_assoc();
-    else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'رویداد یافت نشد.']; header("Location: events.php"); exit; }
-    $stmt_event_cont->close();
-} else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطا بارگذاری رویداد: '.$conn->error]; header("Location: events.php"); exit; }
+$selected_event_id_content = isset($_GET['event_id_content']) ? (int)$_GET['event_id_content'] : null;
+$feedback_message_content = ''; // Specific feedback variable
 
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit_content_file'])) {
-    if (!verify_csrf_token($_POST['csrf_token'] ?? '', 'inservice_content_action_' . $event_id_for_content)) {
-        $errors_cont[] = 'خطای CSRF!';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_content'])) {
+    // CSRF check would go here
+    $event_id_posted_content = $_POST['event_id_posted_content'] ?? null;
+    $description_content = sanitize_input($_POST['description_content'] ?? '');
+    $access_level_content = sanitize_input($_POST['access_level_content'] ?? 'public');
+
+    if (!$event_id_posted_content) {
+        $feedback_message_content = "<div class='alert alert-danger'>لطفاً ابتدا یک رویداد را از لیست بالا انتخاب کنید.</div>";
+    } elseif (isset($_FILES['content_file']) && $_FILES['content_file']['error'] == 0 ) {
+        $file_name_original = sanitize_input($_FILES['content_file']['name']);
+        // In a real app:
+        // 1. Validate file type, size against defined limits.
+        // 2. Generate a unique name for the file to prevent overwrites and for security.
+        // 3. Move the uploaded file to a secure, non-web-accessible directory or a designated uploads folder.
+        //    $target_dir = __DIR__ . "/../../uploads/inservice_content/"; // Example path
+        //    if(!is_dir($target_dir)) { mkdir($target_dir, 0755, true); }
+        //    $file_extension = pathinfo($file_name_original, PATHINFO_EXTENSION);
+        //    $new_file_name = uniqid('inservice_', true) . '.' . $file_extension;
+        //    $target_file = $target_dir . $new_file_name;
+        //    if (move_uploaded_file($_FILES['content_file']['tmp_name'], $target_file)) {
+        //        // Save $new_file_name (stored name), $file_name_original (display name), $description_content, $access_level_content to DB for $event_id_posted_content
+        //        $feedback_message_content = "<div class='alert alert-success'>فایل \"".htmlspecialchars($file_name_original)."\" با موفقیت آپلود شد. (نمایشی)</div>";
+        //    } else {
+        //        $feedback_message_content = "<div class='alert alert-danger'>خطا در هنگام جابجایی فایل آپلود شده.</div>";
+        //    }
+        $feedback_message_content = "<div class='alert alert-success'>فایل \"".htmlspecialchars($file_name_original)."\" (نمونه) با موفقیت آپلود شد. (ذخیره‌سازی واقعی انجام نشد)</div>";
+
     } else {
-        $file_description = sanitize_input($_POST['file_description'] ?? '');
-        if (isset($_FILES['content_file']) && $_FILES['content_file']['error'] == UPLOAD_ERR_OK) {
-            $upload_dir_cont = __DIR__ . '/../../../uploads/inservice_content/';
-            if (!is_dir($upload_dir_cont)) { if (!mkdir($upload_dir_cont, 0775, true)) $errors_cont[] = 'خطا در ایجاد پوشه آپلود.'; }
-
-            if (empty($errors_cont)) {
-                $file_info_cont = pathinfo($_FILES['content_file']['name']);
-                $file_extension_cont = strtolower($file_info_cont['extension'] ?? '');
-                $allowed_extensions_cont = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip', 'rar', 'mp3', 'wav', 'mp4', 'mov', 'avi', 'mkv'];
-                $max_file_size_cont = 50 * 1024 * 1024; // 50 MB
-
-                if (!in_array($file_extension_cont, $allowed_extensions_cont)) $errors_cont[] = 'نوع فایل مجاز نیست.';
-                elseif ($_FILES['content_file']['size'] > $max_file_size_cont) $errors_cont[] = 'حجم فایل (بیش از 50MB).';
-                else {
-                    $safe_original_filename_cont = preg_replace('/[^A-Za-z0-9_\-\.ء-ي]/u', '_', basename($_FILES['content_file']['name']));
-                    $new_filename_cont = uniqid('inservice_' . $event_id_for_content . '_', true) . '.' . $file_extension_cont; // Ensure extension is preserved
-                    $upload_path_cont = $upload_dir_cont . $new_filename_cont;
-
-                    if (move_uploaded_file($_FILES['content_file']['tmp_name'], $upload_path_cont)) {
-                        $current_uploader_id = get_current_user_id();
-                        $relative_path_cont = 'uploads/inservice_content/' . $new_filename_cont;
-                        $file_type_mime_cont = mime_content_type($upload_path_cont) ?: $_FILES['content_file']['type'];
-                        $file_size_bytes_cont = $_FILES['content_file']['size'];
-
-                        $stmt_insert_file_db = $conn->prepare("INSERT INTO Files (FileName, FilePath, FileType, FileSize, UploadedByUserID, UploadDate, AssociatedEntityType, AssociatedEntityID, Description) VALUES (?, ?, ?, ?, ?, NOW(), 'inservice_content', ?, ?)");
-                        if ($stmt_insert_file_db) {
-                            $stmt_insert_file_db->bind_param("sssiisi", $safe_original_filename_cont, $relative_path_cont, $file_type_mime_cont, $file_size_bytes_cont, $current_uploader_id, $event_id_for_content, $file_description);
-                            if ($stmt_insert_file_db->execute()) {
-                                $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'فایل آپلود شد.'];
-                            } else { $errors_cont[] = "خطا ذخیره اطلاعات فایل: " . $stmt_insert_file_db->error; }
-                            $stmt_insert_file_db->close();
-                        } else { $errors_cont[] = "خطا آماده سازی کوئری فایل: " . $conn->error; }
-                    } else { $errors_cont[] = 'خطا در آپلود فایل.'; }
-                }
-            }
-        } elseif(!isset($_FILES['content_file']) || $_FILES['content_file']['error'] != UPLOAD_ERR_NO_FILE) {
-             $errors_cont[] = 'فایلی انتخاب نشده یا خطایی در آپلود (کد: '.($_FILES['content_file']['error'] ?? 'N/A').')';
-        } else { $errors_cont[] = 'فایلی برای آپلود انتخاب نشده.'; }
+        $feedback_message_content = "<div class='alert alert-danger'>خطا در آپلود فایل. لطفاً فایل معتبری انتخاب کنید. (کد خطا: ".($_FILES['content_file']['error'] ?? 'N/A').")</div>";
     }
-    $csrf_token_content = regenerate_csrf_token('inservice_content_action_' . $event_id_for_content);
-    if(empty($errors_cont) && isset($_SESSION['flash_message']) && $_SESSION['flash_message']['type'] == 'success') { header("Location: content.php?event_id=" . $event_id_for_content); exit; }
 }
-
-if (isset($_GET['delete_file_id']) && is_numeric($_GET['delete_file_id'])) {
-    if (!isset($_GET['csrf_token']) || !verify_csrf_token($_GET['csrf_token'], 'inservice_content_action_' . $event_id_for_content)) {
-        $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطای CSRF!'];
-    } else {
-        $file_id_to_delete = (int)$_GET['delete_file_id'];
-        $stmt_get_file = $conn->prepare("SELECT FilePath FROM Files WHERE FileID = ? AND AssociatedEntityID = ? AND AssociatedEntityType = 'inservice_content'");
-        if($stmt_get_file){
-            $stmt_get_file->bind_param("ii", $file_id_to_delete, $event_id_for_content); $stmt_get_file->execute(); $res_file_path = $stmt_get_file->get_result();
-            if($file_to_del_data = $res_file_path->fetch_assoc()){
-                $file_path_on_server = __DIR__ . '/../../../' . ltrim($file_to_del_data['FilePath'], '/');
-                $stmt_delete_file_db = $conn->prepare("DELETE FROM Files WHERE FileID = ?");
-                if ($stmt_delete_file_db) {
-                    $stmt_delete_file_db->bind_param("i", $file_id_to_delete);
-                    if ($stmt_delete_file_db->execute() && $stmt_delete_file_db->affected_rows > 0) {
-                        if (file_exists($file_path_on_server) && is_writable($file_path_on_server)) { unlink($file_path_on_server); }
-                        $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'فایل حذف شد.'];
-                    } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطا حذف از دیتابیس: ' . $stmt_delete_file_db->error]; }
-                    $stmt_delete_file_db->close();
-                } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطا آماده سازی حذف: ' . $conn->error]; }
-            } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'فایل یافت نشد.']; }
-            $stmt_get_file->close();
-        } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطا یافتن فایل: ' . $conn->error]; }
-    }
-    $csrf_token_content = regenerate_csrf_token('inservice_content_action_' . $event_id_for_content);
-    header("Location: content.php?event_id=" . $event_id_for_content); exit;
-}
-
-$stmt_fetch_files = $conn->prepare("SELECT FileID, FileName, FilePath, FileType, FileSize, UploadDate, Description FROM Files WHERE AssociatedEntityID = ? AND AssociatedEntityType = 'inservice_content' ORDER BY UploadDate DESC");
-if ($stmt_fetch_files) { $stmt_fetch_files->bind_param("i", $event_id_for_content); $stmt_fetch_files->execute(); $res_files_db = $stmt_fetch_files->get_result(); while ($file_db_row = $res_files_db->fetch_assoc()) $event_files_db[] = $file_db_row; $stmt_fetch_files->close(); }
 ?>
-<div class="page-header"><h1>محتوای جلسه: <?php echo htmlspecialchars($event_data_content['EventName'] ?? '...'); ?></h1><p class="page-subtitle">تاریخ: <?php echo to_jalali($event_data_content['EventDate'] ?? '', 'yyyy/MM/dd HH:mm'); ?></p><div class="page-header-actions"><a href="events.php" class="btn btn-secondary">بازگشت به رویدادها</a></div></div>
+<div class="page-header">
+    <h1>مدیریت محتوای جلسات ضمن خدمت</h1>
+    <p class="page-subtitle">آپلود، مشاهده و مدیریت فایل‌های مرتبط با هر رویداد ضمن خدمت.</p>
+</div>
 
-<?php if (isset($_SESSION['flash_message'])) { /* ... Flash ... */ } ?>
-<?php if (!empty($errors_cont)): ?> <div class="alert alert-danger"><ul><?php foreach ($errors_cont as $err_cont_item_msg): ?><li><?php echo htmlspecialchars($err_cont_item_msg); ?></li><?php endforeach; ?></ul></div> <?php endif; ?>
+<?php echo $feedback_message_content; ?>
 
-<div class="card shadow-sm mb-4"><div class="card-header"><h5 class="mb-0 card-title-text">آپلود فایل محتوای جدید</h5></div>
-<div class="card-body">
-    <form action="content.php?event_id=<?php echo $event_id_for_content; ?>" method="POST" enctype="multipart/form-data">
-        <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_content; ?>">
-        <div class="form-group"><label for="content_file_upload">انتخاب فایل <span class="text-danger">*</span></label><input type="file" class="form-control-file" id="content_file_upload" name="content_file" required><small class="form-text text-muted">حداکثر 50MB. انواع مجاز: تصاویر، PDF، اسناد، ویدیو، صوت، فشرده.</small></div>
-        <div class="form-group"><label for="file_description_upload">توضیحات (اختیاری)</label><input type="text" class="form-control" id="file_description_upload" name="file_description" placeholder="مثلاً: اسلایدهای ارائه"></div>
-        <button type="submit" name="submit_content_file" class="btn btn-primary">آپلود</button>
-    </form></div></div>
+<div class="card shadow-sm mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">انتخاب رویداد برای مدیریت محتوا</h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="content.php" class="form-inline">
+            <div class="form-group mr-sm-2 mb-2">
+                <label for="event_id_content_select" class="mr-2">رویداد:</label>
+                <select name="event_id_content" id="event_id_content_select" class="form-control custom-select" onchange="this.form.submit()">
+                    <option value="">-- یک رویداد انتخاب کنید --</option>
+                    <?php foreach($sample_inservice_events_for_content as $event): ?>
+                        <option value="<?php echo $event['EventID']; ?>" <?php if($selected_event_id_content == $event['EventID']) echo 'selected'; ?>>
+                            <?php echo htmlspecialchars($event['EventName']); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <?php if ($selected_event_id_content): ?>
+                 <a href="content.php" class="btn btn-outline-secondary mb-2 ml-2">پاک کردن انتخاب</a>
+            <?php endif; ?>
+        </form>
+    </div>
+</div>
 
-<div class="card shadow-sm"><div class="card-header"><h5 class="mb-0 card-title-text">فایل‌های آپلود شده</h5></div>
-<div class="card-body">
-    <?php if(!empty($event_files_db)): ?><div class="table-responsive"><table class="table table-sm table-hover">
-        <thead><tr><th>#</th><th>نام فایل</th><th>نوع</th><th>حجم</th><th>تاریخ</th><th>توضیحات</th><th>عملیات</th></tr></thead><tbody>
-        <?php $file_row_num_idx = 1; foreach($event_files_db as $file_item_idx): ?><tr>
-            <td><?php echo $file_row_num_idx++; ?></td>
-            <td><a href="/my_site/<?php echo htmlspecialchars(ltrim($file_item_idx['FilePath'],'/')); ?>" target="_blank" download="<?php echo htmlspecialchars($file_item_idx['FileName']); ?>"><?php echo htmlspecialchars($file_item_idx['FileName']); ?></a></td>
-            <td><small><?php echo htmlspecialchars($file_item_idx['FileType']); ?></small></td>
-            <td><small><?php echo round($file_item_idx['FileSize'] / (1024*1024), 2); ?> MB</small></td>
-            <td><small><?php echo to_jalali($file_item_idx['UploadDate'], 'yyyy/MM/dd HH:mm'); ?></small></td>
-            <td class="small"><?php echo htmlspecialchars($file_item_idx['Description'] ?? '-'); ?></td>
-            <td class="actions-cell">
-                <a href="content.php?event_id=<?php echo $event_id_for_content; ?>&delete_file_id=<?php echo $file_item_idx['FileID']; ?>&csrf_token=<?php echo $csrf_token_content; ?>" class="btn btn-xs btn-danger" title="حذف" onclick="return confirm('آیا از حذف این فایل مطمئن هستید؟');"><svg class="icon" width="12" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></a>
-                <!-- TODO: Share button/modal for setting access permissions -->
-            </td></tr><?php endforeach; ?></tbody></table></div>
-    <?php else: ?><p class="text-muted">فایلی آپلود نشده.</p><?php endif; ?>
-</div></div>
-<script> /* Alert dismissal JS ... */</script>
-<?php require_once __DIR__ . '/../includes/footer.php'; ?>
+<?php if ($selected_event_id_content):
+    $current_event_name_cont = "رویداد انتخاب شده";
+    foreach($sample_inservice_events_for_content as $ev) {
+        if($ev['EventID'] == $selected_event_id_content) {
+            $current_event_name_cont = $ev['EventName'];
+            break;
+        }
+    }
+?>
+<div class="row">
+    <div class="col-lg-5 col-md-12 mb-4">
+        <div class="card shadow-sm">
+            <div class="card-header"><h5 class="mb-0">آپلود محتوای جدید برای: <?php echo htmlspecialchars($current_event_name_cont); ?></h5></div>
+            <div class="card-body">
+                <form method="POST" action="content.php?event_id_content=<?php echo $selected_event_id_content; ?>" enctype="multipart/form-data">
+                    <input type="hidden" name="event_id_posted_content" value="<?php echo $selected_event_id_content; ?>">
+                    <div class="form-group">
+                        <label for="content_file_input">انتخاب فایل:<span class="text-danger">*</span></label>
+                        <input type="file" class="form-control-file" id="content_file_input" name="content_file" required>
+                        <small class="form-text text-muted">فایل‌های مجاز: PDF, DOCX, MP4, MP3, ZIP. حداکثر حجم: ۲۰ مگابایت (نمونه)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="description_content_input">توضیحات فایل:</label>
+                        <textarea class="form-control" name="description_content" id="description_content_input" rows="2" placeholder="توضیح مختصری درباره محتوای فایل"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="access_level_content_select">سطح دسترسی:</label>
+                        <select name="access_level_content" id="access_level_content_select" class="form-control custom-select">
+                            <option value="public">عمومی (قابل مشاهده برای همه مدرسین)</option>
+                            <option value="attendees_only">فقط حاضرین در جلسه</option>
+                            <option value="on_request">با درخواست (نیاز به تایید)</option>
+                        </select>
+                    </div>
+                    <button type="submit" name="upload_content" class="btn btn-primary">آپلود محتوا (نمایشی)</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-7 col-md-12 mb-4">
+        <div class="card shadow-sm">
+            <div class="card-header"><h5 class="mb-0">محتوای موجود برای: <?php echo htmlspecialchars($current_event_name_cont); ?></h5></div>
+            <div class="card-body">
+                <?php $current_event_files = $sample_event_content[$selected_event_id_content] ?? []; ?>
+                <?php if(empty($current_event_files)): ?>
+                    <p class="text-muted text-center py-3">هنوز محتوایی برای این رویداد بارگذاری نشده است.</p>
+                <?php else: ?>
+                <div class="list-group">
+                    <?php foreach($current_event_files as $file_item): ?>
+                    <div class="list-group-item list-group-item-action flex-column align-items-start mb-2">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1 font-weight-bold text-primary"><?php echo htmlspecialchars($file_item['FileName']); ?></h6>
+                            <small class="text-muted"><?php echo htmlspecialchars($file_item['UploadDate']); ?></small>
+                        </div>
+                        <p class="mb-1 small"><?php echo nl2br(htmlspecialchars($file_item['Description'])); ?></p>
+                        <small class="text-muted">توسط: <?php echo htmlspecialchars($file_item['UploadedBy']); ?> | دسترسی: <?php echo htmlspecialchars($file_item['AccessLevel']); ?> | حجم: <?php echo htmlspecialchars($file_item['FileSize']);?></small>
+                        <div class="mt-2">
+                            <a href="#" class="btn btn-sm btn-success disabled" title="دانلود (نمایشی)">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="bi bi-download" viewBox="0 0 16 16" style="vertical-align: -1px;"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>
+                                دانلود
+                            </a>
+                            <a href="#" class="btn btn-sm btn-danger disabled ml-1" title="حذف (نمایشی)">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="bi bi-trash3" viewBox="0 0 16 16" style="vertical-align: -1px;"><path d="M6.5 1h3a.5.5 0 0 1 .5.5v1H6v-1a.5.5 0 0 1 .5-.5ZM11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3A1.5 1.5 0 0 0 5 1.5v1H2.506a.58.58 0 0 0-.01 0H1.5a.5.5 0 0 0 0 1h.538l.853 10.66A2 2 0 0 0 4.885 16h6.23a2 2 0 0 0 1.994-1.84l.853-10.66h.538a.5.5 0 0 0 0-1h-.995a.59.59 0 0 0-.01 0H11Zm1.958 1-.846 10.58a1 1 0 0 1-.997.92h-6.23a1 1 0 0 1-.997-.92L3.042 3.5h9.916Zm-7.487 1a.5.5 0 0 1 .528.47l.5 8.5a.5.5 0 0 1-.998.06L5 5.03a.5.5 0 0 1 .47-.53Zm5.058 0a.5.5 0 0 1 .47.53l-.5 8.5a.5.5 0 1 1-.998-.06l.5-8.5a.5.5 0 0 1 .528-.47ZM8 4.5a.5.5 0 0 1 .5.5v8.5a.5.5 0 0 1-1 0V5a.5.5 0 0 1 .5-.5Z"/></svg>
+                                حذف
+                            </a>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+</div>
+
+<?php else: ?>
+    <div class="alert alert-warning">لطفاً یک رویداد را برای مدیریت محتوای آن انتخاب کنید.</div>
+<?php endif; ?>
+
+<?php
+require_once __DIR__ . '/../includes/footer.php';
+?>
