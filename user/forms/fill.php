@@ -54,7 +54,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $form_data && isset($_POST['submit_
             }
             if ($field['FieldType'] === 'checkbox' && $field['IsRequired'] && empty($value)) {
                 // This specific case for checkbox required might already be caught by the general required check.
-                // If $value is an array from checkboxes, empty($value) works.
             }
 
             if ($field['FieldType'] === 'checkbox' && is_array($value)) {

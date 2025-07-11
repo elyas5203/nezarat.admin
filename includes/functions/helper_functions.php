@@ -164,4 +164,50 @@ if (!function_exists('regenerate_csrf_token')) {
         return $_SESSION['csrf_tokens'][$form_name];
     }
 }
+
+if (!function_exists('create_notification')) {
+    /**
+     * Creates a new notification for a user.
+     *
+     * @param int $user_id The ID of the user to notify.
+     * @param string $message The notification message.
+     * @param string|null $link An optional link for the notification (relative to site root or absolute).
+     * @param string|null $entity_type Optional type of the related entity (e.g., 'ticket', 'task', 'form_submission').
+     * @param int|null $entity_id Optional ID of the related entity.
+     * @return bool True on success, false on failure.
+     */
+    function create_notification($user_id, $message, $link = null, $entity_type = null, $entity_id = null) {
+        global $conn;
+
+        if (!$conn) {
+            error_log("create_notification: Database connection is not available.");
+            return false;
+        }
+        // Ensure link is properly formatted if it's relative and $base_url is available
+        // global $base_url; // Or pass it if needed, or ensure links are always absolute/correctly relative from root
+        // if ($link && strpos($link, 'http') !== 0 && isset($base_url)) {
+        //    $link = rtrim($base_url, '/') . '/' . ltrim($link, '/');
+        // }
+
+
+        $stmt = $conn->prepare("INSERT INTO Notifications (UserID, Message, Link, RelatedEntityType, RelatedEntityID, CreatedAt, IsRead) VALUES (?, ?, ?, ?, ?, NOW(), FALSE)");
+        if ($stmt) {
+            $sanitized_message = sanitize_input($message); // Sanitize message content
+            $stmt->bind_param("isssi", $user_id, $sanitized_message, $link, $entity_type, $entity_id);
+            if ($stmt->execute()) {
+                $stmt->close();
+                // TODO: Implement real-time notification push (e.g., WebSocket, SSE, or trigger for Telegram bot)
+                // error_log("Notification created for UserID: $user_id, Message: $sanitized_message");
+                return true;
+            } else {
+                error_log("create_notification: Failed to execute statement - UserID: $user_id, Error: " . $stmt->error);
+                $stmt->close();
+                return false;
+            }
+        } else {
+            error_log("create_notification: Failed to prepare statement - " . $conn->error);
+            return false;
+        }
+    }
+}
 ?>

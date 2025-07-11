@@ -231,6 +231,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </select>
                  <?php if (isset($errors['department_id'])): ?><div class="invalid-feedback"><?php echo $errors['department_id']; ?></div><?php endif; ?>
             </div>
+
+            <div class="form-group">
+                <label for="form_purpose">هدف/نوع فرم <span class="text-danger">*</span></label>
+                <select class="form-control <?php echo isset($errors['form_purpose']) ? 'is-invalid' : ''; ?>" id="form_purpose" name="form_purpose" required>
+                    <?php
+                    // Ensure $form_purpose_options is defined, if not already from the top of the file
+                    if (!isset($form_purpose_options)) {
+                         $form_purpose_options = [
+                            'general' => 'عمومی', 'self_assessment' => 'خوداظهاری مدرس',
+                            'class_observation' => 'بازدید کلاسی', 'parent_survey' => 'نظرسنجی اولیا',
+                            'service_report' => 'گزارش خدمت گزاری (پرورشی)',
+                        ];
+                    }
+                    // $input_form_purpose should be populated from DB on first load, or from POST on error
+                    $current_form_purpose_val = $input_form_purpose ?? ($form_data_for_form['FormPurpose'] ?? 'general');
+                    foreach ($form_purpose_options as $fp_val => $fp_label): ?>
+                        <option value="<?php echo $fp_val; ?>" <?php echo ($current_form_purpose_val == $fp_val) ? 'selected' : ''; ?>>
+                            <?php echo $fp_label; ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <?php if (isset($errors['form_purpose'])): ?><div class="invalid-feedback"><?php echo $errors['form_purpose']; ?></div><?php endif; ?>
+            </div>
+
         </div>
     </div>
 

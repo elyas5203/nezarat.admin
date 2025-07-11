@@ -107,6 +107,43 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                     $conn->commit();
                     regenerate_csrf_token('ticket_create_form');
+
+                    // --- Create Notification for Admins/Department ---
+                    $notification_message_admin = "تیکت جدید (#" . $new_ticket_id . ") با موضوع \"" . htmlspecialchars($input_val['subject']) . "\" توسط کاربر " . htmlspecialchars($_SESSION['username'] ?? 'ناشناس') . " ایجاد شد.";
+                    $notification_link_admin = ($admin_base_url ?? '/my_site/admin') . "/tickets/view.php?ticket_id=" . $new_ticket_id;
+
+                    if ($actual_dept_id) {
+                        $stmt_dept_managers = $conn->prepare("SELECT UserID FROM UserDepartments WHERE DepartmentID = ? AND IsManager = TRUE");
+                        if ($stmt_dept_managers) {
+                            $stmt_dept_managers->bind_param("i", $actual_dept_id);
+                            $stmt_dept_managers->execute();
+                            $res_dept_managers = $stmt_dept_managers->get_result();
+                            while ($manager_row = $res_dept_managers->fetch_assoc()) {
+                                create_notification($manager_row['UserID'], $notification_message_admin, $notification_link_admin, 'ticket', $new_ticket_id);
+                            }
+                            $stmt_dept_managers->close();
+                        }
+                        // Also notify general admins if department managers are not exclusive support for that department
+                        $stmt_general_admins_for_dept_ticket = $conn->query("SELECT UserID FROM Users WHERE UserType = 'admin'");
+                        if($stmt_general_admins_for_dept_ticket){
+                            while($gen_admin_row = $stmt_general_admins_for_dept_ticket->fetch_assoc()){
+                                // Avoid duplicate if manager is also admin, though create_notification doesn't check for duplicates itself
+                                create_notification($gen_admin_row['UserID'], "[بخش: " . htmlspecialchars($available_departments[array_search($actual_dept_id, array_column($available_departments, 'DepartmentID'))]['DepartmentName'] ?? $actual_dept_id) . "] " .$notification_message_admin, $notification_link_admin, 'ticket', $new_ticket_id);
+                            }
+                            $stmt_general_admins_for_dept_ticket->close();
+                        }
+
+                    } else {
+                        $stmt_all_admins = $conn->query("SELECT UserID FROM Users WHERE UserType = 'admin'");
+                        if ($stmt_all_admins) {
+                            while ($admin_row = $stmt_all_admins->fetch_assoc()) {
+                                create_notification($admin_row['UserID'], $notification_message_admin, $notification_link_admin, 'ticket', $new_ticket_id);
+                            }
+                            $stmt_all_admins->close();
+                        }
+                    }
+                    // --- End Notification ---
+
                     $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'تیکت شما با موفقیت ایجاد شد. شناسه: #' . $new_ticket_id];
                     header("Location: view.php?ticket_id=" . $new_ticket_id);
                     exit;

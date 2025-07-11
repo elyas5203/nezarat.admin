@@ -116,6 +116,41 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && $ticket_data) {
                     if (!$stmt_update_ticket->execute()) throw new Exception("آپدیت تیکت ناموفق: " . $stmt_update_ticket->error);
                     $stmt_update_ticket->close();
 
+                    // --- Create Notification for Admins/Department after user reply ---
+                    $notification_message_admin_reply = "پاسخ جدیدی به تیکت #" . $ticket_id_to_view . " (\"" . htmlspecialchars($ticket_data['Subject']) . "\") توسط کاربر " . htmlspecialchars($_SESSION['username'] ?? 'ناشناس') . " ارسال شد.";
+                    $notification_link_admin_reply = ($admin_base_url ?? '/my_site/admin') . "/tickets/view.php?ticket_id=" . $ticket_id_to_view;
+                    $assigned_dept_id_for_notif_reply = $ticket_data['AssignedToDepartmentID'] ?? null;
+
+                    if ($assigned_dept_id_for_notif_reply) {
+                        $stmt_dept_managers_reply_notify = $conn->prepare("SELECT UserID FROM UserDepartments WHERE DepartmentID = ? AND IsManager = TRUE");
+                        if ($stmt_dept_managers_reply_notify) {
+                            $stmt_dept_managers_reply_notify->bind_param("i", $assigned_dept_id_for_notif_reply);
+                            $stmt_dept_managers_reply_notify->execute();
+                            $res_dept_managers_reply_notify = $stmt_dept_managers_reply_notify->get_result();
+                            while ($manager_row_reply_notify = $res_dept_managers_reply_notify->fetch_assoc()) {
+                                create_notification($manager_row_reply_notify['UserID'], $notification_message_admin_reply, $notification_link_admin_reply, 'ticket_reply', $ticket_id_to_view);
+                            }
+                            $stmt_dept_managers_reply_notify->close();
+                        }
+                         // Also notify general admins
+                        $stmt_general_admins_reply = $conn->query("SELECT UserID FROM Users WHERE UserType = 'admin'");
+                        if($stmt_general_admins_reply){
+                            while($gen_admin_row_reply = $stmt_general_admins_reply->fetch_assoc()){
+                                create_notification($gen_admin_row_reply['UserID'], "[بخش: " . htmlspecialchars($ticket_data['AssignedDepartmentName'] ?? 'عمومی') . "] " . $notification_message_admin_reply, $notification_link_admin_reply, 'ticket_reply', $ticket_id_to_view);
+                            }
+                            $stmt_general_admins_reply->close();
+                        }
+                    } else {
+                        $stmt_all_admins_reply_notify = $conn->query("SELECT UserID FROM Users WHERE UserType = 'admin'");
+                        if ($stmt_all_admins_reply_notify) {
+                            while ($admin_row_reply_notify = $stmt_all_admins_reply_notify->fetch_assoc()) {
+                                create_notification($admin_row_reply_notify['UserID'], $notification_message_admin_reply, $notification_link_admin_reply, 'ticket_reply', $ticket_id_to_view);
+                            }
+                            $stmt_all_admins_reply_notify->close();
+                        }
+                    }
+                    // --- End Notification ---
+
                     $conn->commit();
                     $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'پاسخ شما با موفقیت ثبت شد.'];
                     header("Location: view.php?ticket_id=" . $ticket_id_to_view); exit;
