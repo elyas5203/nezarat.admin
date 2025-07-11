@@ -25,21 +25,20 @@ Options -Indexes
     Require all denied
 </Files>
 
-# جلوگیری از دسترسی مستقیم به فایل‌های داخل پوشه includes
+# جلوگیری از دسترسی مستقیم به فایل‌های داخل پوشه includes و vendor
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteRule ^includes/ - [F,L]
     RewriteRule ^vendor/ - [F,L]
 </IfModule>
 
-# محافظت از فایل db_config.php به طور خاص (اگرچه RewriteRule بالا هم آن را پوشش می‌دهد)
+# محافظت از فایل db_config.php به طور خاص
 <Files "db_config.php">
     Order Allow,Deny
     Deny from all
 </Files>
 
 # (اختیاری) حذف پسوند .php از URL ها
-# برای فعال سازی این بخش، اطمینان حاصل کنید که mod_rewrite فعال است.
 # RewriteCond %{REQUEST_FILENAME} !-d
 # RewriteCond %{REQUEST_FILENAME}\.php -f
 # RewriteRule ^(.*)$ $1.php [L]
@@ -48,53 +47,28 @@ Options -Indexes
 # RewriteCond %{HTTPS} off
 # RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-# تنظیمات مربوط به Charset برای جلوگیری از مشکلات احتمالی با کاراکترهای فارسی در URL یا نام فایل‌ها
-# AddDefaultCharset UTF-8 # این مورد معمولا در تنظیمات اصلی سرور (httpd.conf یا php.ini) انجام می‌شود
+# تنظیمات مربوط به Charset (معمولا در تنظیمات اصلی سرور انجام می‌شود)
+# AddDefaultCharset UTF-8
 
 # مدیریت خطاهای سفارشی (اختیاری)
 # ErrorDocument 403 /error_pages/403.php
 # ErrorDocument 404 /error_pages/404.php
 # ErrorDocument 500 /error_pages/500.php
 
-# تنظیمات مربوط به کش سمت کلاینت (اختیاری، برای بهبود پرفورمنس)
-# <IfModule mod_expires.c>
-#   ExpiresActive On
-#   ExpiresByType image/jpg "access 1 year"
-#   ExpiresByType image/jpeg "access 1 year"
-#   ExpiresByType image/gif "access 1 year"
-#   ExpiresByType image/png "access 1 year"
-#   ExpiresByType text/css "access 1 month"
-#   ExpiresByType application/pdf "access 1 month"
-#   ExpiresByType application/javascript "access 1 month" # js
-#   ExpiresByType application/x-javascript "access 1 month" # js
-#   ExpiresByType text/javascript "access 1 month" # js for some servers
-#   ExpiresByType image/x-icon "access 1 year"
-#   ExpiresDefault "access 2 days"
-# </IfModule>
-
-# فعال سازی Gzip برای فشرده سازی (اختیاری، برای بهبود پرفورمنس)
-# <IfModule mod_deflate.c>
-#   AddOutputFilterByType DEFLATE text/plain
-#   AddOutputFilterByType DEFLATE text/html
-#   AddOutputFilterByType DEFLATE text/xml
-#   AddOutputFilterByType DEFLATE text/css
-#   AddOutputFilterByType DEFLATE application/xml
-#   AddOutputFilterByType DEFLATE application/xhtml+xml
-#   AddOutputFilterByType DEFLATE application/rss+xml
-#   AddOutputFilterByType DEFLATE application/javascript
-#   AddOutputFilterByType DEFLATE application/x-javascript
-# </IfModule>
-
-php_value upload_max_filesize 64M
-php_value post_max_size 64M
-php_value max_execution_time 300
-php_value max_input_time 300
-php_value memory_limit 256M
-php_value session.gc_maxlifetime 7200
-php_value session.cookie_lifetime 0
-php_value session.use_strict_mode 1
-php_value session.cookie_httponly 1
-# php_value session.cookie_secure 1 # فقط در صورت استفاده از HTTPS فعال شود
-php_value display_errors Off # در محیط پروداکشن باید Off باشد، برای دیباگ On
-php_value log_errors On
-php_value error_log "logs/php_error.log" # مسیر فایل لاگ خطاها، پوشه logs باید قابل نوشتن باشد
+# تنظیمات PHP که قبلاً اینجا بودند، باید به php.ini منتقل شوند:
+# php_value upload_max_filesize 64M
+# php_value post_max_size 64M
+# php_value max_execution_time 300
+# php_value max_input_time 300
+# php_value memory_limit 256M
+# php_value session.gc_maxlifetime 7200
+# php_value session.cookie_lifetime 0
+# php_value session.use_strict_mode 1
+# php_value session.cookie_httponly 1
+# # php_value session.cookie_secure 1 # فقط در صورت استفاده از HTTPS فعال شود
+# php_value display_errors Off # در محیط پروداکشن باید Off باشد، برای دیباگ On
+# php_value log_errors On
+# php_value error_log "logs/php_error.log" # مسیر فایل لاگ خطاها، پوشه logs باید قابل نوشتن باشد
+# اطمینان حاصل کنید که پوشه logs در ریشه پروژه شما وجود دارد و وب سرور اجازه نوشتن در آن را دارد
+# یا یک مسیر مطلق برای error_log در php.ini تنظیم کنید.
+```
