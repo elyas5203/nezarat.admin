@@ -110,6 +110,9 @@ function is_active_menu($target_dir, $target_page = null) {
                     <li class="<?php echo is_active_menu('recruitment', 'events.php') ? 'active' : ''; ?>">
                         <a href="<?php echo $admin_base_url; ?>/recruitment/events.php">مدیریت مراسم</a>
                     </li>
+                    <li class="<?php echo is_active_menu('recruitment', 'attendance.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/attendance.php">حضور و غیاب در مراسم</a>
+                    </li>
                 </ul>
             </li>
 
