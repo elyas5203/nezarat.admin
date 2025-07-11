@@ -1,8 +1,5 @@
 <?php
 // admin/includes/sidebar.php
-// Ensure $admin_base_url and $current_page, $current_dir are available
-// They should be defined in header.php which includes this file.
-// If not, define them here or ensure header.php is always included first.
 if (empty($admin_base_url)) {
     $admin_base_url = '/my_site/admin'; // Fallback
 }
@@ -16,20 +13,17 @@ if (empty($current_dir)) {
     $current_dir = basename(dirname($_SERVER['PHP_SELF']));
 }
 
-function is_active_menu($dirs, $page = null) {
+// Updated is_active_menu to better handle parent and child states
+function is_active_menu($target_dir, $target_page = null) {
     global $current_dir, $current_page;
-    if (!is_array($dirs)) {
-        $dirs = [$dirs];
-    }
-    if (in_array($current_dir, $dirs)) {
-        if ($page === null) {
+    if ($current_dir === $target_dir) {
+        if ($target_page === null) { // Parent item, active if in the directory
             return true;
         }
-        return $current_page === $page;
+        return $current_page === $target_page; // Child item, active if page matches
     }
     return false;
 }
-
 ?>
 <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
@@ -73,26 +67,123 @@ function is_active_menu($dirs, $page = null) {
                     <span>مدیریت وظایف</span>
                 </a>
             </li>
-            <li class="<?php echo is_active_menu('settings') ? 'active' : ''; ?>">
-                <a href="<?php echo $admin_base_url; ?>/settings/index.php">
-                    <svg class="menu-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <li class="has-submenu <?php echo is_active_menu('settings') ? 'active open' : ''; ?>">
+                <a href="#"> <!-- The main link for parent doesn't need to go anywhere if it's just a toggle -->
+                    <svg class="menu-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06-.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                     <span>تنظیمات</span>
+                    <svg class="submenu-arrow" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </a>
+                <ul class="submenu" <?php echo is_active_menu('settings') ? 'style="display:block;"' : ''; ?>>
+                    <li class="<?php echo is_active_menu('settings', 'index.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/settings/index.php">تنظیمات عمومی</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('settings', 'telegram_bot.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/settings/telegram_bot.php">تنظیمات ربات تلگرام</a>
+                    </li>
+                    <!-- Add other settings sub-menu items here -->
+                </ul>
             </li>
+
+            <li class="has-submenu <?php echo is_active_menu('recruitment', null, true) ? 'active open' : ''; ?>">
+                <a href="#">
+                    <svg class="menu-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <polyline points="16 11 16 7 12 7 12 11"></polyline> <!-- Simple representation of 'new' or 'add' -->
+                        <line x1="19" y1="8" x2="22" y2="8"></line>
+                        <line x1="19" y1="12" x2="22" y2="12"></line>
+                         <line x1="19" y1="16" x2="22" y2="16"></line>
+                    </svg>
+                    <span>جذب و راه‌اندازی</span>
+                    <svg class="submenu-arrow" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </a>
+                <ul class="submenu" <?php echo is_active_menu('recruitment') ? 'style="display:block;"' : ''; ?>>
+                    <li class="<?php echo is_active_menu('recruitment', 'index.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/index.php">داشبورد جذب</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('recruitment', 'regions.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/regions.php">مدیریت مناطق</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('recruitment', 'prospects.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/prospects.php">مدیریت افراد</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('recruitment', 'events.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/events.php">مدیریت مراسم</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('recruitment', 'attendance.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/attendance.php">حضور و غیاب در مراسم</a>
+                    </li>
+                </ul>
+            </li>
+
+            <li class="has-submenu <?php echo is_active_menu('inservice', null, true) ? 'active open' : ''; ?>">
+                <a href="#">
+                     <svg class="menu-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                        <path d="M8 14h.01"></path>
+                        <path d="M12 14h.01"></path>
+                        <path d="M16 14h.01"></path>
+                        <path d="M8 18h.01"></path>
+                        <path d="M12 18h.01"></path>
+                        <path d="M16 18h.01"></path>
+                    </svg>
+                    <span>ضمن خدمت</span>
+                    <svg class="submenu-arrow" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </a>
+                <ul class="submenu" <?php echo is_active_menu('inservice') ? 'style="display:block;"' : ''; ?>>
+                    <li class="<?php echo is_active_menu('inservice', 'index.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/index.php">داشبورد/تقویم</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'events.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/events.php">مدیریت رویدادها</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'checklists_templates.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/checklists_templates.php">قالب‌های چک‌لیست</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'event_checklists.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/event_checklists.php">چک‌لیست رویدادها</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'attendance.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/attendance.php">حضور و غیاب</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('inservice', 'content.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/inservice/content.php">مدیریت محتوا</a>
+                    </li>
+                </ul>
+            </li>
+
             <!-- Placeholder for future menu items -->
             <!--
             <li class="menu-separator"><hr></li>
-            <li>
-                <a href="#">
-                    <svg class="menu-icon" ...></svg>
-                    <span>گزارشات</span>
-                </a>
-            </li>
-            -->
-        </ul>
-    </nav>
-    <div class="sidebar-footer">
         <small>&copy; <?php echo to_jalali(date('Y-m-d'), 'yyyy'); ?> سامانه دبستان</small>
     </div>
 </aside>
 <div class="sidebar-overlay" id="sidebar-overlay"></div>
+<script>
+// Basic submenu toggle
+document.addEventListener('DOMContentLoaded', function () {
+    const submenuParents = document.querySelectorAll('.sidebar-nav .has-submenu > a');
+    submenuParents.forEach(function (parent) {
+        parent.addEventListener('click', function (e) {
+            // Allow link to work if it's not just '#'
+            if (this.getAttribute('href') === '#') {
+                 e.preventDefault();
+            }
+            const submenu = this.nextElementSibling;
+            if (submenu && submenu.classList.contains('submenu')) {
+                // Toggle 'open' class on parent <li> for styling the arrow or parent item
+                this.parentElement.classList.toggle('open');
+                // Toggle display of submenu
+                if (submenu.style.display === 'block') {
+                    submenu.style.display = 'none';
+                } else {
+                    submenu.style.display = 'block';
+                }
+            }
+        });
+    });
+});
+</script>

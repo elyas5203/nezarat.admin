@@ -56,8 +56,80 @@ $admin_base_url = '/my_site/admin';
                     <div class="datetime">
                         <span id="current-date-placeholder">درحال بارگذاری تاریخ...</span> | <span id="live-time-placeholder">درحال بارگذاری ساعت...</span>
                     </div>
+
+                    <?php
+                    // Notification data fetching logic for Admin
+                    $current_admin_id_for_notif_header = get_current_user_id(); // Should return admin_user_id
+                    $unread_notifications_count_admin_header = 0;
+                    $recent_notifications_admin_header = [];
+
+                    if ($current_admin_id_for_notif_header && is_admin_logged_in()) { // Ensure it's an admin
+                        $stmt_count_admin_h = $conn->prepare("SELECT COUNT(NotificationID) as count FROM Notifications WHERE UserID = ? AND IsRead = FALSE");
+                        if ($stmt_count_admin_h) {
+                            $stmt_count_admin_h->bind_param("i", $current_admin_id_for_notif_header);
+                            $stmt_count_admin_h->execute();
+                            $unread_notifications_count_admin_header = $stmt_count_admin_h->get_result()->fetch_assoc()['count'] ?? 0;
+                            $stmt_count_admin_h->close();
+                        }
+
+                        $limit_notif_display_admin_h = 5;
+                        $stmt_recent_admin_h = $conn->prepare("
+                            SELECT NotificationID, Message, Link, CreatedAt, IsRead
+                            FROM Notifications WHERE UserID = ? ORDER BY IsRead ASC, CreatedAt DESC LIMIT ?");
+                        if ($stmt_recent_admin_h) {
+                            $stmt_recent_admin_h->bind_param("ii", $current_admin_id_for_notif_header, $limit_notif_display_admin_h);
+                            $stmt_recent_admin_h->execute();
+                            $result_recent_admin_h = $stmt_recent_admin_h->get_result();
+                            while ($row_notif_admin_h = $result_recent_admin_h->fetch_assoc()) {
+                                $recent_notifications_admin_header[] = $row_notif_admin_h;
+                            }
+                            $stmt_recent_admin_h->close();
+                        }
+                    }
+                     $csrf_token_mark_all_read_admin = generate_csrf_token('mark_all_read_admin');
+                    ?>
+                     <div class="dropdown notification-dropdown">
+                        <a href="#" class="header-icon-btn notification-btn dropdown-toggle" id="adminNotificationDropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" aria-label="اعلانات ادمین">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                            <?php if ($unread_notifications_count_admin_header > 0): ?>
+                                <span class="notification-badge" id="admin-notification-badge-count"><?php echo $unread_notifications_count_admin_header; ?></span>
+                            <?php endif; ?>
+                        </a>
+                        <div class="dropdown-menu dropdown-menu-left dropdown-menu-arrow animated--fade-in" aria-labelledby="adminNotificationDropdown" id="admin-notification-dropdown-menu">
+                            <div class="dropdown-header d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">اعلانات ادمین</h6>
+                                <?php if ($unread_notifications_count_admin_header > 0): ?>
+                                <a href="<?php echo $admin_base_url; ?>/notifications/mark_all_read.php?csrf_token=<?php echo $csrf_token_mark_all_read_admin; ?>" class="small mark-all-read-link" id="admin-mark-all-notifications-read">خوانده شدن همه</a>
+                                <?php endif; ?>
+                            </div>
+                            <div class="dropdown-divider my-0"></div>
+                            <div class="notification-items-container py-2" style="max-height: 300px; overflow-y:auto;">
+                            <?php if (!empty($recent_notifications_admin_header)): ?>
+                                <?php foreach ($recent_notifications_admin_header as $notif_h_a): ?>
+                                    <a class="dropdown-item notification-item d-flex align-items-center <?php echo !$notif_h_a['IsRead'] ? 'unread font-weight-bold' : ''; ?>"
+                                       href="<?php echo !empty($notif_h_a['Link']) ? htmlspecialchars($notif_h_a['Link']) . (strpos($notif_h_a['Link'], '?') === false ? '?' : '&') . 'notif_id=' . $notif_h_a['NotificationID'] : '#'; ?>"
+                                       data-notif-id="<?php echo $notif_h_a['NotificationID']; ?>">
+                                       <div class="mr-3">
+                                            <div class="icon-circle bg-primary"> <!-- Admin panel primary color -->
+                                                 <svg class="text-white" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 15c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1s1 .45 1 1v4c0 .55-.45 1-1 1zm0-8c-.55 0-1-.45-1-1V7c0-.55.45-1 1-1s1 .45 1 1v1c0 .55-.45 1-1 1z"/></svg>
+                                            </div>
+                                        </div>
+                                       <div>
+                                           <div class="small text-gray-500"><?php echo to_jalali($notif_h_a['CreatedAt'], 'yyyy/MM/dd HH:mm'); ?></div>
+                                           <span class="notification-message"><?php echo mb_substr(htmlspecialchars($notif_h_a['Message']), 0, 60) . (mb_strlen($notif_h_a['Message']) > 60 ? '...' : ''); ?></span>
+                                       </div>
+                                    </a>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <span class="dropdown-item text-muted text-center small py-3">هیچ اعلان جدیدی برای ادمین وجود ندارد.</span>
+                            <?php endif; ?>
+                            </div>
+                            <a class="dropdown-item text-center small text-gray-500 py-2" href="<?php echo $admin_base_url; ?>/notifications/index.php">مشاهده همه اعلانات ادمین</a>
+                        </div>
+                    </div>
+
                     <a href="<?php echo $admin_base_url; ?>/auth/logout.php" class="logout-btn" aria-label="خروج">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                        <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
                         <span>خروج</span>
                     </a>
                 </div>
