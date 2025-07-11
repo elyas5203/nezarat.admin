@@ -1,0 +1,328 @@
+/* assets/css/admin/dashboard.css */
+body.admin-panel {
+    background-color: #f8f9fa; /* Light gray background for admin panel */
+    color: #343a40; /* Default text color */
+    font-family: 'Vazirmatn', sans-serif;
+    display: flex;
+    min-height: 100vh;
+    overflow-x: hidden; /* Prevent horizontal scroll */
+}
+
+.dashboard-container {
+    display: flex;
+    width: 100%;
+    transition: margin-right 0.3s ease; /* For sidebar push effect */
+}
+
+/* Main Content Area */
+.main-content {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    transition: margin-right 0.3s ease, width 0.3s ease;
+    background-color: #ffffff; /* White background for content area */
+    /* overflow-y: auto; Removed to allow page-content to scroll */
+}
+
+.main-header {
+    background-color: #ffffff;
+    padding: 15px 25px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e9ecef; /* Subtle border */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    position: sticky;
+    top: 0;
+    z-index: 990; /* Below sidebar overlay, above content */
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+}
+
+#hamburger-menu {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    margin-left: 15px; /* Space between hamburger and welcome message */
+    color: #495057;
+}
+#hamburger-menu svg {
+    display: block;
+}
+
+.welcome-message {
+    font-size: 1rem;
+    color: #495057;
+    font-weight: 500;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+}
+
+.datetime {
+    font-size: 0.85rem;
+    color: #6c757d; /* Gray color for datetime */
+    margin-left: 20px; /* Space before logout button */
+    direction: ltr; /* Ensure LTR for mixed Persian/English numbers in date/time */
+    text-align: right;
+}
+#current-date-placeholder, #live-time-placeholder {
+    display: inline-block; /* Prevent wrapping */
+}
+
+
+.logout-btn {
+    display: flex;
+    align-items: center;
+    background-color: transparent;
+    color: #dc3545; /* Red color for logout */
+    padding: 8px 12px;
+    border: 1px solid #dc3545;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+.logout-btn svg {
+    margin-left: 6px; /* Space between icon and text */
+}
+.logout-btn:hover {
+    background-color: #dc3545;
+    color: #fff;
+}
+
+/* Page Content Area */
+.page-content {
+    padding: 25px;
+    flex-grow: 1; /* Allow content to take up available space */
+    overflow-y: auto; /* Enable scrolling for page content only */
+    background-color: #f8f9fa; /* Match body background or slightly different */
+}
+
+.page-header {
+    margin-bottom: 25px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #dee2e6;
+}
+.page-header h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #343a40;
+    margin-bottom: 5px;
+}
+.page-subtitle {
+    font-size: 1rem;
+    color: #6c757d;
+}
+
+/* Dashboard Widgets */
+.dashboard-widgets-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); /* Responsive grid */
+    gap: 25px;
+    margin-bottom: 30px;
+}
+
+.widget {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column; /* Align items vertically */
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.widget:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+}
+
+.widget-icon {
+    margin-bottom: 15px; /* Space below icon */
+    color: #007bff; /* Default icon color */
+}
+.widget-icon svg {
+    width: 36px;
+    height: 36px;
+}
+/* Specific widget icon colors */
+.widget-users .widget-icon { color: #17a2b8; } /* Info blue */
+.widget-departments .widget-icon { color: #28a745; } /* Success green */
+.widget-forms .widget-icon { color: #ffc107; } /* Warning yellow */
+.widget-last-login .widget-icon { color: #6f42c1; } /* Indigo */
+
+
+.widget-content h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 8px;
+}
+
+.widget-data {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #343a40;
+    margin-bottom: 10px;
+}
+.widget-data-small {
+    font-size: 0.95rem;
+    color: #6c757d;
+    line-height: 1.4;
+}
+
+.widget-link {
+    margin-top: auto; /* Push link to the bottom */
+    padding-top: 10px; /* Space above link */
+    font-size: 0.9rem;
+    color: #007bff;
+    text-decoration: none;
+    font-weight: 500;
+    align-self: flex-start; /* Align link to the start (right in RTL) */
+}
+.widget-link:hover {
+    text-decoration: underline;
+    color: #0056b3;
+}
+
+/* Content Sections */
+.content-section {
+    background-color: #fff;
+    padding: 25px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    margin-bottom: 25px;
+}
+.content-section h2 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: #343a40;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed #dee2e6;
+}
+
+.recent-activities {
+    list-style: none;
+    padding: 0;
+}
+.recent-activities li {
+    padding: 10px 0;
+    border-bottom: 1px solid #f1f1f1;
+    font-size: 0.95rem;
+    color: #495057;
+}
+.recent-activities li:last-child {
+    border-bottom: none;
+}
+.recent-activities .notif-time, .recent-activities .activity-time {
+    color: #6c757d;
+    font-size: 0.85rem;
+    margin-left: 8px;
+}
+
+.quick-access-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+.quick-link {
+    background-color: #e9ecef;
+    color: #343a40;
+    padding: 10px 18px;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+.quick-link:hover {
+    background-color: #007bff;
+    color: #fff;
+}
+
+
+/* Footer */
+.main-footer-bottom {
+    text-align: center;
+    padding: 15px;
+    font-size: 0.85rem;
+    color: #6c757d;
+    background-color: #ffffff;
+    border-top: 1px solid #e9ecef;
+}
+
+/* Loading Overlay Spinner (already in header but can be styled here too) */
+#loading-overlay {
+    /* styles in header.php */
+}
+.spinner {
+    /* styles in header.php */
+}
+
+
+/* Sidebar open states - affects main content positioning */
+.dashboard-container.sidebar-open .main-content {
+    /* margin-right: 260px; /* Width of sidebar */
+    /* width: calc(100% - 260px); /* Adjust width when sidebar is open */
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) { /* For tablets and smaller */
+    .dashboard-container.sidebar-open .main-content {
+        margin-right: 0; /* Sidebar overlays on smaller screens */
+        width: 100%;
+    }
+    .main-header {
+        padding: 12px 15px;
+    }
+    .page-content {
+        padding: 15px;
+    }
+    .dashboard-widgets-grid {
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 15px;
+    }
+    .widget {
+        padding: 15px;
+    }
+    .widget-data {
+        font-size: 1.5rem;
+    }
+    .page-header h1 {
+        font-size: 1.6rem;
+    }
+}
+
+@media (max-width: 768px) { /* For mobile phones */
+    .main-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .header-right {
+        width: 100%;
+        justify-content: space-between;
+        margin-top: 10px;
+    }
+    .datetime {
+        margin-left: 10px;
+        font-size: 0.8rem;
+    }
+    .welcome-message {
+        font-size: 0.9rem;
+    }
+    .logout-btn {
+        padding: 6px 10px;
+        font-size: 0.85rem;
+    }
+    .dashboard-widgets-grid {
+        grid-template-columns: 1fr; /* Stack widgets on very small screens */
+    }
+}

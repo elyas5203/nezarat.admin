@@ -1,0 +1,358 @@
+/* assets/css/user/dashboard.css */
+body.user-panel {
+    background-color: #f0f2f5; /* A slightly different background for user panel */
+    color: #212529;
+    font-family: 'Vazirmatn', sans-serif;
+    display: flex;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+.dashboard-container {
+    display: flex;
+    width: 100%;
+    transition: margin-right 0.3s ease;
+}
+
+/* Main Content Area for User Panel */
+.main-content {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    transition: margin-right 0.3s ease, width 0.3s ease;
+    background-color: #ffffff;
+}
+
+.main-header {
+    background-color: #ffffff;
+    padding: 15px 25px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #dee2e6; /* Slightly different border color */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.06);
+    position: sticky;
+    top: 0;
+    z-index: 990;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+}
+
+#hamburger-menu { /* Shared style from common/sidebar.css or specific override */
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    margin-left: 15px;
+    color: #343a40; /* Icon color for user panel */
+}
+#hamburger-menu svg {
+    display: block;
+}
+
+
+.welcome-message {
+    font-size: 1rem;
+    color: #343a40;
+    font-weight: 500;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+}
+
+.datetime {
+    font-size: 0.85rem;
+    color: #5a6268; /* Slightly darker gray for user panel datetime */
+    margin-left: 15px;
+    direction: ltr;
+    text-align: right;
+}
+#current-date-placeholder, #live-time-placeholder {
+    display: inline-block;
+}
+
+.header-icon-btn {
+    background: none;
+    border: none;
+    color: #495057;
+    padding: 8px;
+    margin-left: 10px;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s ease;
+}
+.header-icon-btn:hover {
+    color: #17a2b8; /* User panel accent color */
+}
+.header-icon-btn svg {
+    display: block;
+}
+.notification-badge {
+    position: absolute;
+    top: 2px;
+    right: 0px;
+    background-color: #e63946; /* Red badge */
+    color: white;
+    font-size: 0.65rem;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 50%;
+    min-width: 16px;
+    text-align: center;
+    line-height: 1;
+}
+
+
+.logout-btn {
+    display: flex;
+    align-items: center;
+    background-color: transparent;
+    color: #17a2b8; /* User panel accent color for logout */
+    padding: 8px 12px;
+    border: 1px solid #17a2b8;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+.logout-btn svg {
+    margin-left: 6px;
+}
+.logout-btn:hover {
+    background-color: #17a2b8;
+    color: #fff;
+}
+
+/* Page Content Area */
+.page-content {
+    padding: 25px;
+    flex-grow: 1;
+    overflow-y: auto;
+    background-color: #f0f2f5; /* Match body background */
+}
+
+.page-header {
+    margin-bottom: 25px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #d1d9e1; /* User panel specific border */
+}
+.page-header h1 {
+    font-size: 1.7rem; /* Slightly smaller than admin */
+    font-weight: 600;
+    color: #1d3557; /* A deep blue for user panel headings */
+    margin-bottom: 5px;
+}
+.page-subtitle {
+    font-size: 0.95rem;
+    color: #495057;
+}
+
+/* User Dashboard Widgets */
+.dashboard-widgets-grid.user-widgets {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 20px; /* Slightly smaller gap */
+    margin-bottom: 25px;
+}
+
+.widget { /* Shared styles from admin/dashboard.css or common, can be overridden */
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.07);
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.widget:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+}
+
+.widget-icon {
+    margin-bottom: 12px;
+    color: #17a2b8; /* Default user panel icon color */
+}
+.widget-icon svg {
+    width: 32px; /* Slightly smaller icons for user panel */
+    height: 32px;
+}
+/* Specific widget icon colors for user panel */
+.widget-profile .widget-icon { color: #457b9d; } /* Darker blue */
+.widget-forms .widget-icon { color: #e76f51; } /* Coral/Orange */
+.widget-tasks .widget-icon { color: #2a9d8f; } /* Teal */
+.widget-tickets .widget-icon { color: #fca311; } /* Bright Yellow/Orange */
+
+
+.widget-content h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #343a40;
+    margin-bottom: 6px;
+}
+
+.widget-data { /* Shared */
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #212529;
+    margin-bottom: 8px;
+}
+.widget-data-small { /* Shared */
+    font-size: 0.9rem;
+    color: #5a6268;
+    line-height: 1.4;
+}
+
+.widget-link { /* Shared */
+    margin-top: auto;
+    padding-top: 8px;
+    font-size: 0.85rem;
+    color: #17a2b8;
+    text-decoration: none;
+    font-weight: 500;
+    align-self: flex-start;
+}
+.widget-link:hover { /* Shared */
+    text-decoration: underline;
+    color: #117a8b;
+}
+
+/* Content Sections for User Panel */
+.content-section { /* Shared */
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
+}
+.content-section h2 { /* Shared */
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #1d3557;
+    margin-bottom: 15px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed #d1d9e1;
+}
+
+.notifications-preview ul {
+    list-style: none;
+    padding: 0;
+}
+.notifications-preview li {
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f2f5;
+    font-size: 0.9rem;
+    color: #343a40;
+}
+.notifications-preview li:last-child {
+    border-bottom: none;
+}
+.notifications-preview .notif-time {
+    color: #5a6268;
+    font-size: 0.8rem;
+    margin-left: 6px;
+}
+.notifications-preview .notif-link {
+    color: #17a2b8;
+    text-decoration: none;
+    font-weight: 500;
+    margin-right: 5px; /* RTL */
+}
+.notifications-preview .notif-link:hover {
+    text-decoration: underline;
+}
+.view-all-notifications {
+    display: inline-block;
+    margin-top: 15px;
+    font-size: 0.9rem;
+    color: #17a2b8;
+    text-decoration: none;
+    font-weight: 500;
+}
+.view-all-notifications:hover {
+    text-decoration: underline;
+}
+
+
+/* Footer */
+.main-footer-bottom { /* Shared */
+    text-align: center;
+    padding: 15px;
+    font-size: 0.85rem;
+    color: #5a6268;
+    background-color: #ffffff;
+    border-top: 1px solid #dee2e6;
+}
+
+/* Loading Overlay Spinner (already in header but can be styled here too) */
+#loading-overlay {
+    /* styles in header.php */
+}
+.spinner {
+    /* styles in header.php */
+}
+
+/* Sidebar open states - affects main content positioning */
+.dashboard-container.sidebar-open .main-content {
+    /* margin-right: 250px; /* Width of user sidebar, if different */
+    /* width: calc(100% - 250px); */
+}
+
+/* Responsive adjustments - can inherit from admin or have specific ones */
+@media (max-width: 992px) {
+    .dashboard-container.sidebar-open .main-content {
+        margin-right: 0;
+        width: 100%;
+    }
+     .main-header {
+        padding: 12px 15px;
+    }
+    .page-content {
+        padding: 15px;
+    }
+     .dashboard-widgets-grid.user-widgets {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 15px;
+    }
+    .widget {
+        padding: 15px;
+    }
+    .widget-data {
+        font-size: 1.5rem;
+    }
+    .page-header h1 {
+        font-size: 1.5rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .main-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .header-right {
+        width: 100%;
+        justify-content: space-between;
+        margin-top: 10px;
+    }
+    .datetime {
+        margin-left: 10px;
+        font-size: 0.8rem;
+    }
+     .welcome-message {
+        font-size: 0.9rem;
+    }
+    .logout-btn {
+        padding: 6px 10px;
+        font-size: 0.85rem;
+    }
+    .dashboard-widgets-grid.user-widgets {
+        grid-template-columns: 1fr;
+    }
+}
