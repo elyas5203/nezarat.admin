@@ -1,66 +1,75 @@
 <?php
 // includes/functions/helper_functions.php
 
+if (session_status() == PHP_SESSION_NONE) { // Ensure session is started before using $_SESSION
+    session_start();
+}
+
 // تابع برای پاکسازی ورودی‌ها
 function sanitize_input($data) {
+    if (is_array($data)) {
+        return array_map('sanitize_input', $data);
+    }
     $data = trim($data);
     $data = stripslashes($data);
-    $data = htmlspecialchars($data);
+    $data = htmlspecialchars($data, ENT_QUOTES, 'UTF-8'); // Specify ENT_QUOTES and UTF-8
     return $data;
 }
 
 // بررسی اینکه آیا کاربر ادمین لاگین کرده است
 function is_admin_logged_in() {
-    if (session_status() == PHP_SESSION_NONE) {
-        session_start();
-    }
     return isset($_SESSION['admin_user_id']) && isset($_SESSION['user_type']) && $_SESSION['user_type'] === 'admin';
 }
 
 // بررسی اینکه آیا کاربر عادی لاگین کرده است
 function is_user_logged_in() {
-    if (session_status() == PHP_SESSION_NONE) {
-        session_start();
-    }
     return isset($_SESSION['user_id']) && isset($_SESSION['user_type']) && $_SESSION['user_type'] !== 'admin';
 }
 
-// تابع برای بررسی سطح دسترسی کاربر (نیازمند تکمیل بر اساس سیستم Roles و Permissions)
+// تابع برای بررسی سطح دسترسی کاربر
 function has_permission($permission_name) {
-    // این تابع باید کامل شود
-    if (is_admin_logged_in()) return true; // ادمین به همه چیز دسترسی دارد
+    if (is_admin_logged_in()) {
+        // Assuming 'admin' user_type is a super admin with all permissions.
+        // For more granular admin roles, this would need to check their specific role permissions too.
+        return true;
+    }
 
     if (is_user_logged_in()) {
-        global $conn; // اطمینان از دسترسی به $conn
+        global $conn;
         if (!$conn) {
-            // اگر $conn در دسترس نیست، سعی کنید دوباره آن را مقداردهی کنید یا خطا برگردانید
-            // این حالت نباید رخ دهد اگر db_config.php به درستی include شده باشد
-            // require_once __DIR__ . '/../config/db_config.php'; // ممکن است نیاز باشد مسیر را تنظیم کنید
-            error_log("Database connection not available in has_permission function.");
-            return false;
+            // error_log("Database connection unavailable in has_permission(). Trying to reconnect...");
+            // require_once __DIR__ . '/../config/db_config.php'; // Adjust path as needed
+            // if (!$conn) { // Check again
+            //      error_log("Database reconnection failed in has_permission().");
+            //      return false;
+            // }
+             error_log("Database connection unavailable in has_permission().");
+             return false; // Fail safe if connection is truly gone
         }
         $user_id = $_SESSION['user_id'];
-        $sql = "SELECT p.PermissionName
+        $sql = "SELECT 1
                 FROM UserRoles ur
                 JOIN RolePermissions rp ON ur.RoleID = rp.RoleID
                 JOIN Permissions p ON rp.PermissionID = p.PermissionID
-                WHERE ur.UserID = ? AND p.PermissionName = ?";
+                WHERE ur.UserID = ? AND p.PermissionName = ?
+                LIMIT 1";
         $stmt = $conn->prepare($sql);
         if (!$stmt) {
-            error_log("Prepare failed in has_permission: (" . $conn->errno . ") " . $conn->error);
+            error_log("Prepare failed in has_permission() for permission '$permission_name': (" . $conn->errno . ") " . $conn->error);
             return false;
         }
         $stmt->bind_param("is", $user_id, $permission_name);
         $stmt->execute();
         $result = $stmt->get_result();
+        $has_perm = $result->num_rows > 0;
         $stmt->close();
-        return $result->num_rows > 0;
+        return $has_perm;
     }
-    return false; // به صورت پیش‌فرض دسترسی ندارد
+    return false;
 }
 
 // تابع برای نمایش تاریخ شمسی
-function to_jalali($gregorian_date_str, $format = 'yyyy/MM/dd HH:mm:ss') { // فرمت Intl
+function to_jalali($gregorian_date_str, $format = 'yyyy/MM/dd HH:mm:ss') {
     if (empty($gregorian_date_str) || $gregorian_date_str == '0000-00-00 00:00:00' || $gregorian_date_str == '0000-00-00') {
         return '';
     }
@@ -69,88 +78,45 @@ function to_jalali($gregorian_date_str, $format = 'yyyy/MM/dd HH:mm:ss') { // ف
         $timestamp = strtotime($gregorian_date_str);
         if ($timestamp === false) return $gregorian_date_str;
 
-        $jalali_formatter = new IntlDateFormatter(
-            'fa_IR@calendar=persian',
-            IntlDateFormatter::FULL, // Date type
-            IntlDateFormatter::FULL, // Time type
-            'Asia/Tehran',
-            IntlDateFormatter::TRADITIONAL, // Calendar type
-            $format
-        );
-        if (!$jalali_formatter) {
-            // error_log("IntlDateFormatter creation failed: " . intl_get_error_message());
-            return date('Y/m/d H:i:s', $timestamp) . " (خطا در تبدیل به شمسی)";
+        try {
+            $jalali_formatter = new IntlDateFormatter(
+                'fa_IR@calendar=persian;numbers=arab', // Request Arabic-Indic numerals
+                IntlDateFormatter::FULL,
+                IntlDateFormatter::FULL,
+                'Asia/Tehran',
+                IntlDateFormatter::TRADITIONAL,
+                $format
+            );
+            // Check for errors after creation
+            if (intl_is_failure($jalali_formatter->getErrorCode())) {
+                // error_log("IntlDateFormatter creation failed: " . intl_error_name($jalali_formatter->getErrorCode()));
+                return date('Y/m/d H:i:s', $timestamp) . " (خطا ۱)";
+            }
+            $formatted_date = $jalali_formatter->format($timestamp);
+            if ($formatted_date === false) {
+                // error_log("IntlDateFormatter format failed: " . $jalali_formatter->getErrorMessage());
+                 return date('Y/m/d H:i:s', $timestamp) . " (خطا ۲)";
+            }
+            return $formatted_date;
+        } catch (Exception $e) {
+            // error_log("Exception during date formatting: " . $e->getMessage());
+            return date('Y/m/d H:i:s', $timestamp) . " (استثنا)";
         }
-        $formatted_date = $jalali_formatter->format($timestamp);
-        if ($formatted_date === false) {
-            // error_log("IntlDateFormatter format failed: " . intl_get_error_message());
-             return date('Y/m/d H:i:s', $timestamp) . " (خطا در فرمت شمسی)";
-        }
-        return $formatted_date;
     }
-    return date('Y/m/d H:i:s', strtotime($gregorian_date_str)) . " (میلادی - intl غیرفعال)";
+    return date('Y/m/d H:i:s', strtotime($gregorian_date_str)) . " (میلادی)";
 }
 
-// تابع برای نمایش ساعت به صورت زنده (نیاز به جاوااسکریپت سمت کاربر)
+
 function display_live_time_script() {
-    echo "<span id='live-time'></span>
-    <script>
-        function updateLiveTime() {
-            const now = new Date();
-            const optionsTime = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Tehran', numberingSystem: 'latn' };
-            let timeString;
-            try {
-                // از fa-IR-u-nu-arab برای اعداد عربی-فارسی استفاده می‌کنیم اگر fa-IR اعداد فارسی را به درستی نمایش ندهد
-                timeString = new Intl.DateTimeFormat('fa-IR-u-nu-arab', optionsTime).format(now);
-            } catch (e) {
-                timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Tehran' });
-                const persianNumbers = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
-                timeString = timeString.replace(/[0-9]/g, function (w) {
-                    return persianNumbers[+w];
-                });
-            }
-            if (document.getElementById('live-time')) {
-                document.getElementById('live-time').innerText = timeString;
-            }
-        }
-        setInterval(updateLiveTime, 1000);
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', updateLiveTime);
-        } else {
-            updateLiveTime(); // Initial call if DOM is already loaded
-        }
-    </script>";
+    echo "<span id='live-time-placeholder'></span>"; // JS in footer will populate this
 }
 
-function display_current_jalali_date_script($format = 'yyyy/MM/dd') { // فرمت Intl
-    echo "<span id='current-date'>";
-    if (class_exists('IntlDateFormatter')) {
-        $jalali_formatter = new IntlDateFormatter(
-            'fa_IR@calendar=persian',
-            IntlDateFormatter::FULL,
-            IntlDateFormatter::NONE,
-            'Asia/Tehran',
-            IntlDateFormatter::TRADITIONAL,
-            $format
-        );
-        if ($jalali_formatter) {
-            echo $jalali_formatter->format(time());
-        } else {
-            echo date('Y/m/d') . " (خطا در نمایش تاریخ شمسی)";
-        }
-    } else {
-        echo date('Y/m/d') . " (میلادی - intl غیرفعال)";
-    }
-    echo "</span>";
-    // JS برای آپدیت تاریخ در نیمه شب می‌تواند پیچیده باشد و نیاز به مدیریت دقیق timezone دارد.
-    // ساده‌ترین راه، رفرش صفحه یا درخواست ایجکس برای دریافت تاریخ جدید از سرور است.
-    // فعلا فقط نمایش اولیه با PHP انجام می‌شود.
+function display_current_jalali_date_script($format = 'yyyy/MM/dd') {
+    echo "<span id='current-date-placeholder'></span>"; // JS in footer will populate this
 }
+
 
 function get_current_user_id() {
-    if (session_status() == PHP_SESSION_NONE) {
-        session_start();
-    }
     if (is_admin_logged_in()) {
         return $_SESSION['admin_user_id'];
     } elseif (is_user_logged_in()) {
@@ -160,9 +126,6 @@ function get_current_user_id() {
 }
 
 function get_current_user_type() {
-    if (session_status() == PHP_SESSION_NONE) {
-        session_start();
-    }
      if (is_admin_logged_in()) {
         return 'admin';
     } elseif (is_user_logged_in()) {
@@ -171,4 +134,34 @@ function get_current_user_type() {
     return null;
 }
 
+
+// CSRF Token Functions
+if (!function_exists('generate_csrf_token')) {
+    function generate_csrf_token($form_name = 'default_form') {
+        if (empty($_SESSION['csrf_tokens'][$form_name])) {
+            $_SESSION['csrf_tokens'][$form_name] = bin2hex(random_bytes(32));
+        }
+        return $_SESSION['csrf_tokens'][$form_name];
+    }
+}
+
+if (!function_exists('verify_csrf_token')) {
+    function verify_csrf_token($submitted_token, $form_name = 'default_form') {
+        if (isset($_SESSION['csrf_tokens'][$form_name]) && hash_equals($_SESSION['csrf_tokens'][$form_name], $submitted_token)) {
+            // Token is valid. Consider invalidating it after use for critical actions.
+            // For general forms, it might be okay to keep it for the session duration or until regenerated.
+            // unset($_SESSION['csrf_tokens'][$form_name]); // Example: Invalidate after use
+            return true;
+        }
+        // error_log("CSRF token verification failed for form: $form_name. Submitted: $submitted_token, Session: " . ($_SESSION['csrf_tokens'][$form_name] ?? 'NOT SET'));
+        return false;
+    }
+}
+
+if (!function_exists('regenerate_csrf_token')) {
+    function regenerate_csrf_token($form_name = 'default_form') {
+        $_SESSION['csrf_tokens'][$form_name] = bin2hex(random_bytes(32));
+        return $_SESSION['csrf_tokens'][$form_name];
+    }
+}
 ?>
