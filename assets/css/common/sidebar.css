@@ -1,0 +1,226 @@
+/* assets/css/common/sidebar.css */
+:root {
+    --sidebar-width: 260px;
+    --sidebar-width-user: 250px; /* Can be different for user panel */
+    --sidebar-bg-admin: #2c3e50; /* Dark blue/gray for admin */
+    --sidebar-text-admin: #ecf0f1;
+    --sidebar-hover-bg-admin: #34495e;
+    --sidebar-active-bg-admin: #007bff; /* Admin accent */
+    --sidebar-active-text-admin: #ffffff;
+
+    --sidebar-bg-user: #34495a; /* Slightly different dark for user */
+    --sidebar-text-user: #e0e6ed;
+    --sidebar-hover-bg-user: #4a627a;
+    --sidebar-active-bg-user: #17a2b8; /* User accent */
+    --sidebar-active-text-user: #ffffff;
+
+    --sidebar-transition: 0.3s ease;
+}
+
+.sidebar {
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width); /* Prevent squishing */
+    height: 100vh;
+    position: fixed; /* Fixed position */
+    top: 0;
+    right: calc(-1 * var(--sidebar-width)); /* Start off-screen for RTL */
+    background-color: var(--sidebar-bg-admin); /* Default to admin */
+    color: var(--sidebar-text-admin);
+    display: flex;
+    flex-direction: column;
+    transition: right var(--sidebar-transition); /* Animate 'right' for RTL */
+    z-index: 1000; /* Ensure sidebar is on top */
+    box-shadow: -3px 0 15px rgba(0,0,0,0.2); /* Shadow on the left for RTL */
+}
+
+.sidebar.user-sidebar { /* Specific styles for user sidebar */
+    width: var(--sidebar-width-user);
+    min-width: var(--sidebar-width-user);
+    right: calc(-1 * var(--sidebar-width-user));
+    background-color: var(--sidebar-bg-user);
+    color: var(--sidebar-text-user);
+}
+
+.sidebar.open {
+    right: 0; /* Slide in from the right */
+}
+
+.sidebar-header {
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.sidebar-header .logo {
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+    color: inherit;
+}
+.sidebar-header .logo-text {
+    font-size: 1.2rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.sidebar-header .logo img {
+    border: 1px solid rgba(255,255,255,0.3);
+}
+
+
+.close-sidebar-btn {
+    background: none;
+    border: none;
+    color: var(--sidebar-text-admin); /* Default to admin */
+    font-size: 1.8rem;
+    cursor: pointer;
+    padding: 5px;
+    display: none; /* Hidden by default, shown in JS for mobile */
+    line-height: 1;
+}
+.sidebar.user-sidebar .close-sidebar-btn {
+    color: var(--sidebar-text-user);
+}
+
+
+.sidebar-nav {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding-top: 15px;
+}
+.sidebar-nav ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.sidebar-nav li a {
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    color: var(--sidebar-text-admin); /* Default to admin */
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 500;
+    transition: background-color var(--sidebar-transition), color var(--sidebar-transition), padding-right 0.2s ease;
+    border-right: 3px solid transparent; /* For active state indicator on the right */
+}
+.sidebar.user-sidebar .sidebar-nav li a {
+    color: var(--sidebar-text-user);
+}
+
+
+.sidebar-nav li a:hover {
+    background-color: var(--sidebar-hover-bg-admin); /* Default to admin */
+    color: #fff; /* Brighter text on hover */
+    padding-right: 23px; /* Indent on hover */
+}
+.sidebar.user-sidebar .sidebar-nav li a:hover {
+    background-color: var(--sidebar-hover-bg-user);
+}
+
+.sidebar-nav li.active > a {
+    background-color: var(--sidebar-active-bg-admin); /* Default to admin */
+    color: var(--sidebar-active-text-admin);
+    font-weight: 600;
+    border-right-color: #f0f0f0; /* Active indicator color */
+}
+.sidebar.user-sidebar .sidebar-nav li.active > a {
+    background-color: var(--sidebar-active-bg-user);
+    color: var(--sidebar-active-text-user);
+     border-right-color: #f8f9fa;
+}
+
+
+.sidebar-nav .menu-icon {
+    margin-left: 12px; /* Space between icon and text (for RTL, icon is on the right of text) */
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0; /* Prevent icon from shrinking */
+    stroke-width: 2; /* Consistent stroke width */
+}
+.sidebar-nav li.active > a .menu-icon {
+    /* Optional: Change icon color on active state if needed */
+    /* stroke: var(--sidebar-active-text-admin); */
+}
+
+
+.sidebar-nav .menu-badge {
+    margin-right: auto; /* Push badge to the left in RTL */
+    margin-left: 5px; /* Add some space from the edge */
+    background-color: #e74c3c; /* Badge color */
+    color: white;
+    font-size: 0.7rem;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 10px;
+    line-height: 1;
+}
+
+
+.sidebar-footer {
+    padding: 15px 20px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: rgba(255,255,255,0.6);
+    border-top: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Overlay for when sidebar is open on mobile */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.6);
+    z-index: 999; /* Below sidebar, above content */
+    transition: opacity var(--sidebar-transition);
+    opacity: 0;
+}
+.sidebar-overlay.active {
+    display: block;
+    opacity: 1;
+}
+
+
+/* Responsive behavior */
+@media (max-width: 992px) { /* Tablet and mobile */
+    .sidebar {
+        /* Sidebar will be fixed and overlay content */
+        box-shadow: -5px 0 20px rgba(0,0,0,0.25); /* Stronger shadow when overlaying */
+    }
+    .close-sidebar-btn {
+        display: block; /* Show close button on mobile */
+    }
+    .dashboard-container .main-content {
+        margin-right: 0 !important; /* No margin push when sidebar overlays */
+        width: 100% !important;
+    }
+    /* Hamburger should always be visible to toggle */
+    #hamburger-menu {
+        display: block !important;
+    }
+}
+
+@media (min-width: 992.01px) { /* Desktop */
+    /* Sidebar pushes content */
+    .sidebar.open {
+        /* No change needed, already slides in */
+    }
+    .dashboard-container.sidebar-open .main-content {
+        margin-right: var(--sidebar-width); /* Push content by sidebar width */
+    }
+    .dashboard-container.sidebar-open .sidebar.user-sidebar ~ .main-content {
+         margin-right: var(--sidebar-width-user);
+    }
+
+    #hamburger-menu {
+        /* display: none; /* Hide hamburger on desktop if sidebar is always visible or toggled differently */
+        /* Or keep it to allow collapsing the sidebar */
+    }
+    .close-sidebar-btn {
+        display: none; /* Hide X button on desktop */
+    }
+}
