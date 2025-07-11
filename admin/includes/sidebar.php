@@ -83,6 +83,36 @@ function is_active_menu($target_dir, $target_page = null) {
                     <!-- Add other settings sub-menu items here -->
                 </ul>
             </li>
+
+            <li class="has-submenu <?php echo is_active_menu('recruitment', null, true) ? 'active open' : ''; ?>">
+                <a href="#">
+                    <svg class="menu-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <polyline points="16 11 16 7 12 7 12 11"></polyline> <!-- Simple representation of 'new' or 'add' -->
+                        <line x1="19" y1="8" x2="22" y2="8"></line>
+                        <line x1="19" y1="12" x2="22" y2="12"></line>
+                         <line x1="19" y1="16" x2="22" y2="16"></line>
+                    </svg>
+                    <span>جذب و راه‌اندازی</span>
+                    <svg class="submenu-arrow" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </a>
+                <ul class="submenu" <?php echo is_active_menu('recruitment') ? 'style="display:block;"' : ''; ?>>
+                    <li class="<?php echo is_active_menu('recruitment', 'index.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/index.php">داشبورد جذب</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('recruitment', 'regions.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/regions.php">مدیریت مناطق</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('recruitment', 'prospects.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/prospects.php">مدیریت افراد</a>
+                    </li>
+                    <li class="<?php echo is_active_menu('recruitment', 'events.php') ? 'active' : ''; ?>">
+                        <a href="<?php echo $admin_base_url; ?>/recruitment/events.php">مدیریت مراسم</a>
+                    </li>
+                </ul>
+            </li>
+
             <!-- Placeholder for future menu items -->
             <!--
             <li class="menu-separator"><hr></li>
