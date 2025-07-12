@@ -384,4 +384,116 @@ if (!function_exists('create_notification')) {
         return $db_notification_was_created;
     }
 }
+
+// Form Builder Helper Functions
+if (!function_exists('get_form_field_types_config')) {
+    function get_form_field_types_config() {
+        return [
+            'add_new_field_icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-plus-lg me-1" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2Z"/></svg>',
+            'types' => [
+                'text' => ['label' => 'متن تک خطی', 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-input-cursor-text me-2" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M5 2a.5.5 0 0 1 .5.5v11a.5.5 0 0 1-1 0v-11A.5.5 0 0 1 5 2zM2 4a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4zm1 0v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1z"/></svg>', 'has_options' => false, 'has_placeholder' => true, 'has_min_max_value' => false, 'has_max_length' => true, 'has_helper_text' => true, 'has_file_types' => false],
+                'textarea' => ['label' => 'متن چند خطی', 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-textarea-t me-2" viewBox="0 0 16 16"><path d="M1.5 2.5A1.5 1.5 0 0 1 3 1h10a1.5 1.5 0 0 1 1.5 1.5v3.563h-1v-3.556a.5.5 0 0 0-.5-.5H3a.5.5 0 0 0-.5.5v3.556h-1V2.5zM2 7v5.5A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5V7h-1v5.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7h-1z"/><path d="M5 10.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5z"/></svg>', 'has_options' => false, 'has_placeholder' => true, 'has_min_max_value' => false, 'has_max_length' => true, 'has_helper_text' => true, 'has_file_types' => false],
+                'number' => ['label' => 'عددی', 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-hash me-2" viewBox="0 0 16 16"><path d="M8.39 12.648a1.32 1.32 0 0 0-.015.18c0 .305.21.508.5.508.266 0 .492-.172.555-.477l.554-2.703h1.204c.421 0 .617-.234.617-.547 0-.312-.188-.53-.617-.53h-.985l.516-2.524h1.265c.43 0 .618-.227.618-.547 0-.313-.188-.524-.618-.524h-1.046l.476-2.304a1.06 1.06 0 0 0 .016-.164.51.51 0 0 0-.516-.516.54.54 0 0 0-.539.43l-.523 2.554H7.617l.477-2.304c.008-.04.015-.118.015-.164a.512.512 0 0 0-.512-.512.539.539 0 0 0-.531.43L6.53 5.484H5.414c-.43 0-.617.227-.617.547 0 .313.188.524.617.524h.91l-.516 2.524H4.69c-.421 0-.617.234-.617.547 0 .312.196.53.617.53h.985l-.554 2.703c-.02.118-.03.227-.03.313 0 .305.21.508.5.508.281 0 .487-.172.554-.477l.555-2.703h2.242l-.515 2.422zm-1.13-1.403h2.116l.516-2.524H6.748l.512 2.524z"/></svg>', 'has_options' => false, 'has_placeholder' => true, 'has_min_max_value' => true, 'has_max_length' => false, 'has_helper_text' => true, 'has_file_types' => false],
+                'date' => ['label' => 'تاریخ (شمسی)', 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-calendar3 me-2" viewBox="0 0 16 16"><path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zM1 3.857C1 3.384 1.448 3 2 3h12c.552 0 1 .384 1 .857v10.286c0 .473-.448.857-1 .857H2c-.552 0-1-.384-1-.857V3.857z"/><path d="M6.5 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-9 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-9 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>', 'has_options' => false, 'has_placeholder' => false, 'has_min_max_value' => false, 'has_max_length' => false, 'has_helper_text' => true, 'has_file_types' => false],
+                'select' => ['label' => 'لیست کشویی', 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-menu-button-wide-fill me-2" viewBox="0 0 16 16"><path d="M1.5 0A1.5 1.5 0 0 0 0 1.5v2A1.5 1.5 0 0 0 1.5 5h13A1.5 1.5 0 0 0 16 3.5v-2A1.5 1.5 0 0 0 14.5 0h-13zm1 2h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1 0-1zm-1 7A1.5 1.5 0 0 0 0 10.5v2A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-2A1.5 1.5 0 0 0 14.5 9h-13zm1 2h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1 0-1z"/></svg>', 'has_options' => true, 'has_placeholder' => false, 'has_min_max_value' => false, 'has_max_length' => false, 'has_helper_text' => true, 'has_file_types' => false],
+                'radio' => ['label' => 'گزینه‌های رادیویی', 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-ui-radios me-2" viewBox="0 0 16 16"><path d="M7 2.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-1zM0 12a3 3 0 1 1 6 0 3 3 0 0 1-6 0zM7 12.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7a.5.5 0 0 1-.5-.5zM3 12a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM0 2a2 2 0 1 1 4 0 2 2 0 0 1-4 0zm2-1.5a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-3a.5.5 0 0 1 .5-.5h1z"/></svg>', 'has_options' => true, 'has_placeholder' => false, 'has_min_max_value' => false, 'has_max_length' => false, 'has_helper_text' => true, 'has_file_types' => false],
+                'checkbox' => ['label' => 'چک‌باکس‌ها', 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-ui-checks me-2" viewBox="0 0 16 16"><path d="M7 2.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-1zM2 1a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2H2zm0 1h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1pzm0 8a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2H2zm0 1h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1zm5-6.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-1zm0 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-1z"/></svg>', 'has_options' => true, 'has_placeholder' => false, 'has_min_max_value' => false, 'has_max_length' => false, 'has_helper_text' => true, 'has_file_types' => false],
+                // 'file' => ['label' => 'آپلود فایل', 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-file-earmark-arrow-up me-2" viewBox="0 0 16 16"><path d="M8.5 11.5a.5.5 0 0 1-1 0V7.707L6.354 8.854a.5.5 0 1 1-.708-.708l2-2a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 7.707V11.5z"/><path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 1.5v2A1.5 1.5 0 0 0 11 5h2V2.454L9.5 1.5z"/></svg>', 'has_options' => false, 'has_placeholder' => false, 'has_min_max_value' => false, 'has_max_length' => false, 'has_helper_text' => true, 'has_file_types' => true],
+            ]
+        ];
+    }
+}
+
+if (!function_exists('get_form_field_templates_html')) {
+    function get_form_field_templates_html() {
+        // This function centralizes the HTML templates for form fields.
+        // It helps keep the create.php and edit.php cleaner.
+        ob_start();
+        ?>
+        <!-- Universal Field Wrapper Template -->
+        <template id="form-field-wrapper-template">
+            <div class="form-field-item card mb-3 border" data-field-id="">
+                <div class="card-header d-flex justify-content-between align-items-center p-2 bg-light">
+                    <span class="field-type-icon-label fw-bold">
+                        <!-- Icon and Label will be injected by JS -->
+                    </span>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary handle-sort me-1" title="جابجایی فیلد"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-grip-vertical" viewBox="0 0 16 16"><path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg></button>
+                        <button type="button" class="btn btn-sm btn-danger remove-field-btn" title="حذف فیلد"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-x-lg" viewBox="0 0 16 16"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z"/></svg></button>
+                    </div>
+                </div>
+                <div class="card-body p-3 field-properties-container">
+                    <!-- Common properties first -->
+                    <div class="row gx-2">
+                        <div class="col-md-12 mb-2">
+                            <label class="form-label form-label-sm">برچسب (متن سوال) <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm field-property" data-property="label" required>
+                        </div>
+                    </div>
+                    <!-- Specific properties will be injected here by JS -->
+                    <div class="specific-properties mb-2"></div>
+
+                    <!-- Common advanced properties last -->
+                     <div class="row gx-2">
+                        <div class="col-md-6 mb-2 field-prop-placeholder" style="display:none;">
+                            <label class="form-label form-label-sm">متن راهنما (Placeholder)</label>
+                            <input type="text" class="form-control form-control-sm field-property" data-property="placeholder">
+                        </div>
+                        <div class="col-md-6 mb-2 field-prop-helper-text" style="display:none;">
+                            <label class="form-label form-label-sm">متن کمکی</label>
+                            <input type="text" class="form-control form-control-sm field-property" data-property="helper_text" placeholder="توضیح بیشتر زیر فیلد">
+                        </div>
+                    </div>
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input field-property" type="checkbox" data-property="required" id="field_required_placeholder_id">
+                        <label class="form-check-label form-check-label-sm" for="field_required_placeholder_id">الزامی باشد</label>
+                    </div>
+                    <input type="hidden" class="field-property" data-property="type" value="">
+                </div>
+            </div>
+        </template>
+
+        <!-- Property Snippet: Options (for select, radio, checkbox) -->
+        <template id="prop-options-template">
+            <div class="mb-2 options-group">
+                <label class="form-label form-label-sm">گزینه‌ها (هر گزینه در یک خط جدید)</label>
+                <textarea class="form-control form-control-sm field-property options-input" data-property="options_text" rows="3" placeholder="گزینه ۱\nگزینه ۲"></textarea>
+            </div>
+        </template>
+
+        <!-- Property Snippet: Min/Max Value (for number) -->
+        <template id="prop-min-max-value-template">
+            <div class="row gx-2">
+                <div class="col-6 mb-2">
+                    <label class="form-label form-label-sm">حداقل مقدار</label>
+                    <input type="number" class="form-control form-control-sm field-property" data-property="min_value" placeholder="اختیاری">
+                </div>
+                <div class="col-6 mb-2">
+                    <label class="form-label form-label-sm">حداکثر مقدار</label>
+                    <input type="number" class="form-control form-control-sm field-property" data-property="max_value" placeholder="اختیاری">
+                </div>
+            </div>
+        </template>
+
+        <!-- Property Snippet: Max Length (for text, textarea) -->
+        <template id="prop-max-length-template">
+             <div class="mb-2">
+                <label class="form-label form-label-sm">حداکثر طول کاراکتر</label>
+                <input type="number" class="form-control form-control-sm field-property" data-property="max_length" placeholder="اختیاری (مثال: 255)">
+            </div>
+        </template>
+
+        <!-- Property Snippet: File Types (for file input - if implemented) -->
+        <template id="prop-file-types-template">
+            <div class="mb-2">
+                <label class="form-label form-label-sm">انواع فایل مجاز (با ویرگول جدا کنید)</label>
+                <input type="text" class="form-control form-control-sm field-property" data-property="file_types_text" placeholder="مثال: .jpg, .png, .pdf">
+                <small class="form-text text-muted field-property-sm">مثال: .jpg, .png, .pdf, image/*</small>
+            </div>
+        </template>
+
+        <?php
+        return ob_get_clean();
+    }
+}
 ?>

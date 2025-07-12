@@ -1,175 +1,132 @@
 <?php
 require_once __DIR__ . '/../includes/header.php';
 
-$csrf_token_dep_create = generate_csrf_token('department_create_form');
+$dept_name = '';
+$dept_description = '';
+$form_errors = [];
 
-$errors = [];
-$input_val = ['department_name' => '', 'description' => '', 'managers' => []];
+$csrf_token = generate_csrf_token('create_department');
 
-// Fetch potential managers
-$manager_users_query = $conn->query("
-    SELECT UserID, FirstName, LastName, Username
-    FROM Users
-    WHERE UserType IN ('manager', 'deputy', 'admin') AND IsActive = TRUE
-    ORDER BY LastName, FirstName
-");
-$available_managers = [];
-if ($manager_users_query) {
-    while ($mu = $manager_users_query->fetch_assoc()) {
-        $available_managers[] = $mu;
-    }
-    $manager_users_query->close();
-}
-
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // Populate $input_val with POST data first for repopulation
-    $input_val['department_name'] = sanitize_input($_POST['department_name'] ?? '');
-    $input_val['description'] = sanitize_input($_POST['description'] ?? '');
-    $input_val['managers'] = isset($_POST['managers']) && is_array($_POST['managers']) ? array_map('intval', $_POST['managers']) : [];
-
-
-    if (!verify_csrf_token($_POST['csrf_token'] ?? '', 'department_create_form')) {
-        $errors['csrf'] = 'خطای CSRF! درخواست نامعتبر.';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!isset($_POST['csrf_token']) || !verify_csrf_token($_POST['csrf_token'], 'create_department')) {
+        $form_errors['csrf'] = 'خطای امنیتی CSRF. لطفاً صفحه را رفرش کرده و مجدداً تلاش کنید.';
     } else {
+        $csrf_token = regenerate_csrf_token('create_department'); // Regenerate after use
+
+        $dept_name = sanitize_input($_POST['department_name'] ?? '');
+        $dept_description = sanitize_input($_POST['department_description'] ?? '');
+
         // Validation
-        if (empty($input_val['department_name'])) {
-            $errors['department_name'] = 'نام بخش الزامی است.';
+        if (empty($dept_name)) {
+            $form_errors['department_name'] = 'نام بخش نمی‌تواند خالی باشد.';
+        } elseif (strlen($dept_name) > 100) {
+            $form_errors['department_name'] = 'نام بخش نمی‌تواند بیشتر از 100 کاراکتر باشد.';
         } else {
-            $stmt_check_name = $conn->prepare("SELECT DepartmentID FROM Departments WHERE DepartmentName = ?");
-            if ($stmt_check_name) {
-                $stmt_check_name->bind_param("s", $input_val['department_name']);
-                $stmt_check_name->execute();
-                if ($stmt_check_name->get_result()->num_rows > 0) {
-                    $errors['department_name'] = 'بخشی با این نام قبلاً ثبت شده است.';
-                }
-                $stmt_check_name->close();
-            } else {
-                $errors['db_error'] = "خطا در بررسی نام بخش: " . $conn->error;
-            }
-        }
-
-        foreach($input_val['managers'] as $manager_id) {
-            $manager_exists = false;
-            foreach($available_managers as $am) {
-                if($am['UserID'] == $manager_id) { $manager_exists = true; break; }
-            }
-            if(!$manager_exists) { $errors['managers'] = "مدیر انتخاب شده نامعتبر است."; break; }
-        }
-
-        if (empty($errors)) {
-            $conn->begin_transaction();
-            try {
-                $stmt_insert_dept = $conn->prepare("INSERT INTO Departments (DepartmentName, Description) VALUES (?, ?)");
-                if (!$stmt_insert_dept) throw new Exception("خطا آماده سازی: " . $conn->error);
-
-                $stmt_insert_dept->bind_param("ss", $input_val['department_name'], $input_val['description']);
-                if ($stmt_insert_dept->execute()) {
-                    $new_department_id = $stmt_insert_dept->insert_id;
-                    $stmt_insert_dept->close();
-
-                    if (!empty($input_val['managers']) && $new_department_id) {
-                        $stmt_assign_manager = $conn->prepare("INSERT INTO UserDepartments (UserID, DepartmentID, IsManager) VALUES (?, ?, TRUE)");
-                        if (!$stmt_assign_manager) throw new Exception("خطا آماده سازی تخصیص مدیر: " . $conn->error);
-
-                        foreach ($input_val['managers'] as $manager_user_id) {
-                            $stmt_assign_manager->bind_param("ii", $manager_user_id, $new_department_id);
-                            if (!$stmt_assign_manager->execute() && $conn->errno !== 1062) { // 1062 is duplicate entry
-                                 throw new Exception("خطا تخصیص مدیر: " . $stmt_assign_manager->error);
-                            }
-                        }
-                        $stmt_assign_manager->close();
+            // Check if department name already exists
+            if ($conn) {
+                $stmt_check_name = $conn->prepare("SELECT DepartmentID FROM Departments WHERE DepartmentName = ?");
+                if ($stmt_check_name) {
+                    $stmt_check_name->bind_param("s", $dept_name);
+                    $stmt_check_name->execute();
+                    if ($stmt_check_name->get_result()->num_rows > 0) {
+                        $form_errors['department_name'] = 'بخشی با این نام قبلاً ثبت شده است.';
                     }
-                    $conn->commit();
-                    regenerate_csrf_token('department_create_form');
-                    header("Location: index.php?action_status=success_create&message=" . urlencode("بخش با موفقیت ایجاد شد."));
-                    exit;
-                } else { throw new Exception("خطا ایجاد بخش: " . $stmt_insert_dept->error); }
-            } catch (Exception $e) { $conn->rollback(); $errors['db_error'] = $e->getMessage(); }
+                    $stmt_check_name->close();
+                } else {
+                    $form_errors['db_error'] = 'خطا در بررسی نام بخش: ' . $conn->error;
+                }
+            } else {
+                 $form_errors['db_error'] = 'خطا در اتصال به پایگاه داده.';
+            }
+        }
+
+        if (strlen($dept_description) > 1000) { // Max length for description
+            $form_errors['department_description'] = 'توضیحات بخش نمی‌تواند بیشتر از 1000 کاراکتر باشد.';
+        }
+
+        if (empty($form_errors)) {
+            if ($conn) {
+                $stmt_insert = $conn->prepare("INSERT INTO Departments (DepartmentName, Description, CreatedAt) VALUES (?, ?, NOW())");
+                if ($stmt_insert) {
+                    $stmt_insert->bind_param("ss", $dept_name, $dept_description);
+                    if ($stmt_insert->execute()) {
+                        $_SESSION['action_success'] = "بخش '" . htmlspecialchars($dept_name) . "' با موفقیت ایجاد شد.";
+                        header("Location: index.php");
+                        exit;
+                    } else {
+                        $form_errors['db_error'] = "خطا در ایجاد بخش: " . $stmt_insert->error;
+                    }
+                    $stmt_insert->close();
+                } else {
+                    $form_errors['db_error'] = "خطا در آماده سازی کوئری ایجاد بخش: " . $conn->error;
+                }
+            } else {
+                 $form_errors['db_error'] = 'خطا در اتصال به پایگاه داده برای ذخیره بخش.';
+            }
         }
     }
-    $csrf_token_dep_create = regenerate_csrf_token('department_create_form');
 }
 ?>
 
 <div class="page-header">
-    <h1>افزودن بخش سازمانی جدید</h1>
+    <h1>افزودن بخش جدید</h1>
     <div class="page-header-actions">
         <a href="index.php" class="btn btn-secondary">
-            <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-            <span>بازگشت به لیست</span>
+             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-right-circle icon" viewBox="0 0 16 16">
+                <path fill-rule="evenodd" d="M1 8a7 7 0 1 0 14 0A7 7 0 0 0 1 8zm15 0A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-4.5-.5a.5.5 0 0 0 0 1h5.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 1 0-.708.708L11.293 7.5H6.5a.5.5 0 0 0 0 1h4.793z"/>
+            </svg>
+            بازگشت به لیست بخش‌ها
         </a>
     </div>
 </div>
 
-<?php if (!empty($errors['db_error'])): ?> <div class="alert alert-danger"><?php echo htmlspecialchars($errors['db_error']); ?></div> <?php endif; ?>
-<?php if (!empty($errors['csrf'])): ?> <div class="alert alert-danger"><?php echo htmlspecialchars($errors['csrf']); ?></div> <?php endif; ?>
-<?php if (count(array_diff_key($errors, array_flip(['db_error', 'csrf']))) > 0 && $_SERVER["REQUEST_METHOD"] == "POST"): ?>
-    <div class="alert alert-danger">لطفاً خطاهای فرم را بررسی و اصلاح کنید.</div>
+<?php if (!empty($form_errors['csrf'])): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <?php echo $form_errors['csrf']; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+<?php endif; ?>
+<?php if (!empty($form_errors['db_error']) && empty($form_errors['department_name']) /* Only show general DB error if not specific field error */): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <?php echo $form_errors['db_error']; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
 <?php endif; ?>
 
 <div class="card">
     <div class="card-body">
-        <form action="create.php" method="POST" class="form-container needs-validation" novalidate>
-            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_dep_create; ?>">
+        <form method="POST" action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>" class="form-container needs-validation" novalidate>
+            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
 
-            <div class="form-group">
-                <label for="department_name">نام بخش <span class="text-danger">*</span></label>
-                <input type="text" class="form-control <?php echo isset($errors['department_name']) ? 'is-invalid' : ''; ?>" id="department_name" name="department_name" value="<?php echo htmlspecialchars($input_val['department_name']); ?>" required>
-                <?php if (isset($errors['department_name'])): ?><div class="invalid-feedback"><?php echo $errors['department_name']; ?></div><?php endif; ?>
+            <div class="form-group mb-3">
+                <label for="department_name" class="form-label">نام بخش <span class="text-danger">*</span></label>
+                <input type="text" class="form-control <?php echo isset($form_errors['department_name']) || (isset($form_errors['db_error']) && strpos($form_errors['db_error'], $dept_name) !==false && !empty($dept_name) ) ? 'is-invalid' : ''; ?>"
+                       id="department_name" name="department_name" value="<?php echo htmlspecialchars($dept_name); ?>" required>
+                <?php if (isset($form_errors['department_name'])): ?>
+                    <div class="invalid-feedback"><?php echo $form_errors['department_name']; ?></div>
+                <?php elseif (isset($form_errors['db_error']) && strpos($form_errors['db_error'], $dept_name) !==false && !empty($dept_name)): ?>
+                     <div class="invalid-feedback"><?php echo $form_errors['db_error']; ?></div> <!-- Show DB error related to name if it exists -->
+                <?php endif; ?>
             </div>
 
-            <div class="form-group">
-                <label for="description">توضیحات</label>
-                <textarea class="form-control <?php echo isset($errors['description']) ? 'is-invalid' : ''; ?>" id="description" name="description" rows="3"><?php echo htmlspecialchars($input_val['description']); ?></textarea>
-                <?php if (isset($errors['description'])): ?><div class="invalid-feedback"><?php echo $errors['description']; ?></div><?php endif; ?>
-            </div>
-
-            <div class="form-group">
-                <label for="managers">مدیر(ان) بخش</label>
-                <select class="form-control <?php echo isset($errors['managers']) ? 'is-invalid' : ''; ?>" id="managers" name="managers[]" multiple data-placeholder="یک یا چند مدیر انتخاب کنید...">
-                    <?php if (!empty($available_managers)): ?>
-                        <?php foreach ($available_managers as $manager): ?>
-                            <option value="<?php echo $manager['UserID']; ?>" <?php echo in_array($manager['UserID'], $input_val['managers']) ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($manager['FirstName'] . ' ' . $manager['LastName'] . ' (@' . $manager['Username'] . ')'); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <option value="" disabled>هیچ کاربری با نقش مناسب برای مدیریت یافت نشد.</option>
-                    <?php endif; ?>
-                </select>
-                <small class="form-text text-muted">می‌توانید یک یا چند مدیر برای این بخش انتخاب کنید (با نگه داشتن Ctrl یا Cmd و کلیک).</small>
-                <?php if (isset($errors['managers'])): ?><div class="invalid-feedback d-block"><?php echo $errors['managers']; ?></div><?php endif; ?>
+            <div class="form-group mb-3">
+                <label for="department_description" class="form-label">توضیحات</label>
+                <textarea class="form-control <?php echo isset($form_errors['department_description']) ? 'is-invalid' : ''; ?>"
+                          id="department_description" name="department_description" rows="4"><?php echo htmlspecialchars($dept_description); ?></textarea>
+                <?php if (isset($form_errors['department_description'])): ?>
+                    <div class="invalid-feedback"><?php echo $form_errors['department_description']; ?></div>
+                <?php endif; ?>
+                <small class="form-text text-muted">توضیح مختصری درباره وظایف و مسئولیت‌های این بخش (اختیاری، حداکثر ۱۰۰۰ کاراکتر).</small>
             </div>
 
             <div class="form-actions">
-                <button type="submit" class="btn btn-primary">
-                     <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                    <span>ایجاد بخش</span>
-                </button>
-                <a href="index.php" class="btn btn-outline-secondary">انصراف</a>
+                <button type="submit" class="btn btn-primary">ایجاد بخش</button>
+                <a href="index.php" class="btn btn-secondary">انصراف</a>
             </div>
         </form>
     </div>
 </div>
-<!-- Placeholder for Select2 or Choices.js initialization if you add them -->
-<!--
-<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
-<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    if (typeof jQuery !== 'undefined' && jQuery.fn.select2) {
-        $('#managers').select2({
-            placeholder: "یک یا چند مدیر انتخاب کنید...",
-            language: "fa",
-            dir: "rtl",
-            width: '100%' // Ensures it fits the form-control style
-        });
-    } else {
-        console.warn('Select2 library not loaded or jQuery not available.');
-    }
-});
-</script>
--->
+
 <?php
 require_once __DIR__ . '/../includes/footer.php';
 ?>

@@ -1,85 +1,157 @@
 <?php
-// admin/recruitment/index.php - Recruitment Dashboard
 require_once __DIR__ . '/../includes/header.php';
+
+$recruitment_stats = [
+    'total_prospects' => 0,
+    'active_regions' => 0,
+    'total_events' => 0,
+    'prospects_current_month' => 0,
+    'most_active_region_name' => '---',
+    'most_active_region_count' => 0,
+];
+
+if ($conn) {
+    try {
+        // Total Prospects
+        $stmt_total_prospects = $conn->query("SELECT COUNT(ProspectID) as count FROM RecruitmentProspects");
+        $recruitment_stats['total_prospects'] = $stmt_total_prospects ? ($stmt_total_prospects->fetch_assoc()['count'] ?? 0) : 'خطا';
+
+        // Active Regions (assuming an IsActive field or just count all)
+        $stmt_active_regions = $conn->query("SELECT COUNT(RegionID) as count FROM RecruitmentRegions"); // Add WHERE IsActive = TRUE if applicable
+        $recruitment_stats['active_regions'] = $stmt_active_regions ? ($stmt_active_regions->fetch_assoc()['count'] ?? 0) : 'خطا';
+
+        // Total Recruitment Events
+        $stmt_total_events = $conn->query("SELECT COUNT(EventID) as count FROM RecruitmentEvents");
+        $recruitment_stats['total_events'] = $stmt_total_events ? ($stmt_total_events->fetch_assoc()['count'] ?? 0) : 'خطا';
+
+        // Prospects this month
+        $current_month_start = date('Y-m-01');
+        $current_month_end = date('Y-m-t'); // 't' gives the last day of the month
+        $stmt_prospects_month = $conn->prepare("SELECT COUNT(ProspectID) as count FROM RecruitmentProspects WHERE JoinedDate >= ? AND JoinedDate <= ?");
+        if($stmt_prospects_month){
+            $stmt_prospects_month->bind_param("ss", $current_month_start, $current_month_end);
+            $stmt_prospects_month->execute();
+            $recruitment_stats['prospects_current_month'] = $stmt_prospects_month->get_result()->fetch_assoc()['count'] ?? 0;
+            $stmt_prospects_month->close();
+        } else {$recruitment_stats['prospects_current_month'] = 'خطا';}
+
+        // Most active region (based on number of prospects)
+        // This query assumes RecruitmentProspects has a RegionID foreign key
+        $stmt_active_region = $conn->query(
+            "SELECT rr.RegionName, COUNT(rp.ProspectID) as prospect_count
+             FROM RecruitmentRegions rr
+             LEFT JOIN RecruitmentProspects rp ON rr.RegionID = rp.RegionID
+             GROUP BY rr.RegionID, rr.RegionName
+             ORDER BY prospect_count DESC
+             LIMIT 1"
+        );
+        if ($stmt_active_region && $active_region_data = $stmt_active_region->fetch_assoc()) {
+            $recruitment_stats['most_active_region_name'] = $active_region_data['RegionName'];
+            $recruitment_stats['most_active_region_count'] = $active_region_data['prospect_count'];
+        } elseif(!$stmt_active_region) {
+            $recruitment_stats['most_active_region_name'] = 'خطا در کوئری';
+        }
+
+    } catch (Exception $e) {
+        error_log("Recruitment dashboard data fetch error: " . $e->getMessage());
+        // Set all to 'خطا' or keep default 0
+        foreach ($recruitment_stats as $key => &$value) { if ($value === 0) $value = 'خطا'; }
+    }
+} else {
+    foreach ($recruitment_stats as $key => &$value) { $value = 'خطا اتصال'; }
+}
 ?>
 
 <div class="page-header">
     <h1>داشبورد جذب و راه‌اندازی</h1>
     <p class="page-subtitle">نمای کلی از فعالیت‌ها و آمارهای مرتبط با جذب افراد جدید.</p>
+     <div class="page-header-actions">
+        <a href="prospects.php?action=create" class="btn btn-primary">
+            <em class="bi bi-person-plus-fill icon"></em> ثبت فرد جدید
+        </a>
+        <a href="regions.php" class="btn btn-outline-secondary">
+            <em class="bi bi-map icon"></em> مدیریت مناطق
+        </a>
+         <a href="events.php" class="btn btn-outline-secondary">
+            <em class="bi bi-calendar-event icon"></em> مدیریت مراسم جذب
+        </a>
+    </div>
 </div>
+
+<?php if (isset($_SESSION['action_success_recruitment'])): ?>
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <?php echo $_SESSION['action_success_recruitment']; unset($_SESSION['action_success_recruitment']); ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+<?php endif; ?>
+<?php if (isset($_SESSION['action_error_recruitment'])): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <?php echo $_SESSION['action_error_recruitment']; unset($_SESSION['action_error_recruitment']); ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+<?php endif; ?>
+
 
 <div class="row">
     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card border-left-primary shadow h-100 py-2">
+        <div class="card border-start border-primary border-4 shadow h-100 py-2">
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
-                    <div class="col mr-2">
-                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">تعداد کل افراد جذب شده (نمونه)</div>
-                        <div class="h5 mb-0 font-weight-bold text-gray-800">150</div>
+                    <div class="col me-2">
+                        <div class="text-xs fw-bold text-primary text-uppercase mb-1">کل افراد جذب شده</div>
+                        <div class="h5 mb-0 fw-bold text-gray-800"><?php echo $recruitment_stats['total_prospects']; ?></div>
                     </div>
                     <div class="col-auto">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="currentColor" class="bi bi-people-fill text-gray-300" viewBox="0 0 16 16"><path d="M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1 1H7zm4-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path fill-rule="evenodd" d="M5.216 14A2.238 2.238 0 0 1 5 13c0-1.355.68-2.75 1.936-3.72A6.325 6.325 0 0 0 5 9c-4 0-5 3-5 4s1 1 1 1h4.216zM4.5 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/></svg>
+                        <em class="bi bi-people-fill fs-2 text-gray-300"></em>
                     </div>
                 </div>
             </div>
+             <a href="prospects.php" class="stretched-link"></a>
         </div>
     </div>
 
     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card border-left-success shadow h-100 py-2">
+        <div class="card border-start border-success border-4 shadow h-100 py-2">
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
-                    <div class="col mr-2">
-                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">تعداد مناطق فعال (نمونه)</div>
-                        <div class="h5 mb-0 font-weight-bold text-gray-800">12</div>
+                    <div class="col me-2">
+                        <div class="text-xs fw-bold text-success text-uppercase mb-1">تعداد مناطق</div>
+                        <div class="h5 mb-0 fw-bold text-gray-800"><?php echo $recruitment_stats['active_regions']; ?></div>
                     </div>
                     <div class="col-auto">
-                         <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="currentColor" class="bi bi-map-fill text-gray-300" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.598-.49L10.5.99 5.598.01a.5.5 0 0 0-.196 0l-5 1A.5.5 0 0 0 0 1.5v14a.5.5 0 0 0 .598.49l4.902-.98 4.902.98a.502.502 0 0 0 .196 0l5-1A.5.5 0 0 0 16 14.5V.5zM5 14.09V1.11l.5-.1.5.1v12.98l-.402-.08a.498.498 0 0 0-.196 0L5 14.09zm5 .8V1.91l.402.08a.5.5 0 0 0 .196 0L11 1.91v12.98l-.5.1-.5-.1z"/></svg>
+                         <em class="bi bi-map-fill fs-2 text-gray-300"></em>
                     </div>
                 </div>
             </div>
+            <a href="regions.php" class="stretched-link"></a>
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card border-left-info shadow h-100 py-2">
+        <div class="card border-start border-info border-4 shadow h-100 py-2">
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
-                    <div class="col mr-2">
-                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">تعداد مراسم‌های جذب (نمونه)</div>
-                        <div class="h5 mb-0 font-weight-bold text-gray-800">4</div>
+                    <div class="col me-2">
+                        <div class="text-xs fw-bold text-info text-uppercase mb-1">مراسم‌های جذب</div>
+                        <div class="h5 mb-0 fw-bold text-gray-800"><?php echo $recruitment_stats['total_events']; ?></div>
                     </div>
                     <div class="col-auto">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="currentColor" class="bi bi-calendar-event-fill text-gray-300" viewBox="0 0 16 16"><path d="M4 .5a.5.5 0 0 0-1 0V1H2a2 2 0 0 0-2 2v1h16V3a2 2 0 0 0-2-2h-1V.5a.5.5 0 0 0-1 0V1H4V.5zM16 14V5H0v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2zm-3.5-7h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5z"/></svg>
+                        <em class="bi bi-calendar-event-fill fs-2 text-gray-300"></em>
                     </div>
                 </div>
             </div>
+             <a href="events.php" class="stretched-link"></a>
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card border-left-warning shadow h-100 py-2">
+        <div class="card border-start border-warning border-4 shadow h-100 py-2">
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
-                    <div class="col mr-2">
-                        <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">جذب در ماه جاری (نمونه)</div>
-                        <div class="h5 mb-0 font-weight-bold text-gray-800">18</div>
+                    <div class="col me-2">
+                        <div class="text-xs fw-bold text-warning text-uppercase mb-1">جذب ماه جاری</div>
+                        <div class="h5 mb-0 fw-bold text-gray-800"><?php echo $recruitment_stats['prospects_current_month']; ?> نفر</div>
                     </div>
                     <div class="col-auto">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="currentColor" class="bi bi-person-plus-fill text-gray-300" viewBox="0 0 16 16"><path d="M1 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H1zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path fill-rule="evenodd" d="M13.5 5a.5.5 0 0 1 .5.5V7h1.5a.5.5 0 0 1 0 1H14v1.5a.5.5 0 0 1-1 0V8h-1.5a.5.5 0 0 1 0-1H13V5.5a.5.5 0 0 1 .5-.5z"/></svg>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card border-left-danger shadow h-100 py-2">
-            <div class="card-body">
-                <div class="row no-gutters align-items-center">
-                    <div class="col mr-2">
-                        <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">فعال‌ترین منطقه (نمونه)</div>
-                        <div class="h5 mb-0 font-weight-bold text-gray-800">قاسم آباد (40 نفر)</div>
-                    </div>
-                    <div class="col-auto">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="currentColor" class="bi bi-pin-map-fill text-gray-300" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M3.1 11.2a.5.5 0 0 1 .4-.2H6a.5.5 0 0 1 0 1H3.75L1.5 15h13l-2.25-3H10a.5.5 0 0 1 0-1h2.5a.5.5 0 0 1 .4.2l3 4a.5.5 0 0 1-.4.8H.5a.5.5 0 0 1-.4-.8l3-4z"/><path fill-rule="evenodd" d="M4 4a4 4 0 1 1 4.5 3.969V13.5a.5.5 0 0 1-1 0V7.97A4 4 0 0 1 4 3.999zm2.493 8.574a.5.5 0 0 1-.411.575c-.712.118-1.28.295-1.655.493a1.319 1.319 0 0 0-.37.265.5.5 0 0 0 .822.565.29.29 0 0 0 .07-.088l.04-.04.002-.002a.5.5 0 0 1 .7-.04L8 14.09V10.5a.5.5 0 0 1 1 0v3.59l.07-.04a.5.5 0 0 1 .7.04l.002.002.04.04.07.088a.5.5 0 0 0 .822-.565 1.319 1.319 0 0 0-.37-.265c-.375-.198-.943-.375-1.655-.493a.5.5 0 0 1-.411-.575V9.99a.5.5 0 0 1 1 0v2.085a2.5 2.5 0 0 0-1-1.58V9.99a.5.5 0 0 1 1 0v.03a.5.5 0 0 1 1 0V10a.5.5 0 0 1 1 0v.03a.5.5 0 0 1 1 0v.03a.5.5 0 0 1 1 0V10a.5.5 0 0 1 .5-.5h.03a.5.5 0 0 1 .5.5v.03a.5.5 0 0 1 .5.5V10a.5.5 0 0 1 .5.5v.03a.5.5 0 0 1 .5.5V10a.5.5 0 0 1 .5.5v.03a.5.5 0 0 1 .5.5V10.5a.5.5 0 0 1 1 0V7.97A4.002 4.002 0 0 1 8 0a4 4 0 0 1 3.053 1.454L12 2.4l-.053-.046A3.98 3.98 0 0 1 8 2a3.98 3.98 0 0 1-3.947.046L4 2.4l.947-1.046A4.002 4.002 0 0 1 8 0z"/></svg>
+                        <em class="bi bi-person-plus-fill fs-2 text-gray-300"></em>
                     </div>
                 </div>
             </div>
@@ -87,26 +159,49 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
-<div class="row mt-4">
-    <div class="col-12">
+<div class="row mt-2">
+     <div class="col-lg-6 mb-4">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <h5 class="mb-0">فعال‌ترین منطقه جذب</h5>
+            </div>
+            <div class="card-body text-center">
+                <em class="bi bi-pin-map-fill fs-1 text-danger mb-2 d-block"></em>
+                <h3 class="mb-1"><?php echo htmlspecialchars($recruitment_stats['most_active_region_name']); ?></h3>
+                <p class="text-muted mb-0">با <strong class="fs-5"><?php echo $recruitment_stats['most_active_region_count']; ?></strong> فرد جذب شده</p>
+                <a href="prospects.php?region_id=<?php // TODO: Add region id if available ?>" class="btn btn-outline-danger btn-sm mt-3">مشاهده افراد این منطقه</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6 mb-4">
         <div class="card shadow-sm">
             <div class="card-header">
                 <h5 class="mb-0">روند جذب در ۶ ماه گذشته (نمودار نمونه)</h5>
             </div>
-            <div class="card-body">
+            <div class="card-body d-flex align-items-center justify-content-center" style="min-height: 200px;">
                 <div class="text-center py-5">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="currentColor" class="bi bi-bar-chart-line-fill text-gray-300" viewBox="0 0 16 16">
-                        <path d="M11 2a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12h.5a.5.5 0 0 1 0 1H.5a.5.5 0 0 1 0-1H1v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h1V7a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v7h1V2z"/>
-                    </svg>
-                    <p class="mt-2 text-muted">محتوای نمودار به زودی در اینجا نمایش داده خواهد شد.</p>
+                    <em class="bi bi-bar-chart-line-fill fs-1 text-gray-300"></em>
+                    <p class="mt-2 text-muted">نمودار به زودی اضافه خواهد شد.</p>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<p class="mt-4">این صفحه به زودی با نمودارها و اطلاعات دقیق‌تر از فعالیت‌های جذب تکمیل خواهد شد.</p>
-<!-- Further content for recruitment dashboard -->
+<div class="row mt-2">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header"><h5 class="mb-0">نیازمند اقدام</h5></div>
+            <div class="card-body">
+                <p class="text-muted">در این بخش، مناطقی که نیاز به برگزاری مراسم دارند یا افرادی که نیاز به پیگیری بیشتر دارند، نمایش داده خواهند شد. (نیازمند پیاده‌سازی)</p>
+                <ul>
+                    <li>منطقه "الهیه": آخرین مراسم جذب ۶ ماه پیش برگزار شده است.</li>
+                    <li>فرد "زهرا احمدی" (جذب شده از مراسم غدیر ۱۴۰۲): نیاز به تماس پیگیری.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
 
 <?php
 require_once __DIR__ . '/../includes/footer.php';

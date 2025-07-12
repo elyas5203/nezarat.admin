@@ -1,202 +1,206 @@
 <?php
-// admin/parvareshi/class_services.php
-require_once __DIR__ . '/../includes/header.php'; // Handles session, db, auth
+require_once __DIR__ . '/../includes/header.php';
 
-$csrf_token_class_services = generate_csrf_token('parvareshi_class_services_action');
+$page_title_pcs = "مدیریت خدمت‌گزاری کلاس‌ها در مناسبت‌ها";
+$action_pcs = $_GET['action'] ?? 'list'; // list, view, approve (example)
+$service_id_pcs_url = isset($_GET['service_id']) ? (int)$_GET['service_id'] : 0;
 
-$errors_cs = [];
-$success_message_cs = ''; // Using flash messages now
+$form_errors_pcs_page = [];
+$class_services_list_display = [];
+$service_details_pcs = null; // For view/edit action
 
-$edit_mode_cs = false;
-$service_log_to_edit = [
-    'ServiceLogID' => null, 'ClassID' => '', 'EventName' => '', 'CustomEventName' => '',
-    'ServiceDescription' => '', 'ServiceDate' => '', 'Location' => '',
-    'Status' => 'planned', 'PhotosFileID' => null
-];
+// Filters for list view
+$filter_class_id_pcs_list = isset($_GET['class_id_filter']) ? (int)$_GET['class_id_filter'] : null;
+$filter_occasion_pcs_list = isset($_GET['occasion_filter']) ? sanitize_input($_GET['occasion_filter']) : '';
+$filter_status_pcs_list = isset($_GET['status_filter']) ? sanitize_input($_GET['status_filter']) : '';
+
+$available_classes_pcs_dd = [];
+if($conn) {
+    $res_cls_pcs_dd = $conn->query("SELECT ClassID, ClassName, AcademicYear FROM Classes ORDER BY AcademicYear DESC, ClassName ASC");
+    if($res_cls_pcs_dd) while($row_dd_cls = $res_cls_pcs_dd->fetch_assoc()) $available_classes_pcs_dd[] = $row_dd_cls;
+}
+
+$service_statuses_pcs_map = ['planned' => 'برنامه‌ریزی شده', 'submitted' => 'ارسال شده توسط مدرس', 'approved' => 'تایید شده', 'completed' => 'انجام شده', 'cancelled' => 'لغو شده', 'needs_improvement' => 'نیازمند بهبود/بازبینی'];
+if (!function_exists('get_pcs_status_badge_class')) { function get_pcs_status_badge_class($status) { $s=strtolower($status??''); if($s=='completed')return'success';if($s=='approved')return'primary';if($s=='submitted')return'info text-dark';if($s=='planned')return'secondary';if($s=='cancelled')return'danger';if($s=='needs_improvement')return'warning text-dark';return'light text-dark';}}
 
 
-$occasions = ['ghadir' => 'غدیر', 'nime_shaban' => 'نیمه شعبان', 'muharram_shahadat' => 'محرم و شهادت‌ها', 'dahe_fajr' => 'دهه فجر', 'other' => 'سایر مناسبت‌ها'];
-$service_statuses = ['planned' => 'برنامه‌ریزی شده', 'in_progress' => 'در دست اقدام', 'completed' => 'انجام شده', 'needs_support' => 'نیاز به پشتیبانی ویژه'];
-$status_badge_cs = ['planned' => 'info', 'in_progress' => 'warning', 'completed' => 'success', 'needs_support' => 'primary'];
+// Handle POST actions (e.g., changing status)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_service_status'])) {
+    // CSRF check would be here
+    $service_id_to_update = isset($_POST['service_id']) ? (int)$_POST['service_id'] : 0;
+    $new_status = sanitize_input($_POST['new_status'] ?? '');
+    $admin_notes = sanitize_input($_POST['admin_notes'] ?? null);
 
-
-$classes_q_cs = $conn->query("SELECT ClassID, ClassName, AcademicYear FROM Classes WHERE IsActive = TRUE ORDER BY AcademicYear DESC, ClassName");
-$available_classes_cs = [];
-if ($classes_q_cs) { while($c_cs = $classes_q_cs->fetch_assoc()) $available_classes_cs[$c_cs['ClassID']] = $c_cs; $classes_q_cs->close(); }
-
-// Handle Edit Request (GET) - Load data into $service_log_to_edit
-if (isset($_GET['edit_log_id']) && is_numeric($_GET['edit_log_id']) && $_SERVER["REQUEST_METHOD"] != "POST") {
-    $edit_log_id_get = (int)$_GET['edit_log_id'];
-    $stmt_edit_cs_get = $conn->prepare("SELECT * FROM ClassServices WHERE ServiceLogID = ?");
-    if ($stmt_edit_cs_get) {
-        $stmt_edit_cs_get->bind_param("i", $edit_log_id_get);
-        $stmt_edit_cs_get->execute();
-        $result_edit_cs_get = $stmt_edit_cs_get->get_result();
-        if ($data_cs_get = $result_edit_cs_get->fetch_assoc()) {
-            $service_log_to_edit = $data_cs_get;
-            // Check if EventName is one of the predefined keys, if not, it's a custom one
-            if (!array_key_exists($data_cs_get['EventName'], $occasions) && !in_array($data_cs_get['EventName'], $occasions)) {
-                $service_log_to_edit['CustomEventName'] = $data_cs_get['EventName'];
-                $service_log_to_edit['EventName'] = 'other'; // Set select to 'other'
+    if ($service_id_to_update > 0 && array_key_exists($new_status, $service_statuses_pcs_map) && $conn) {
+        $stmt_update_status = $conn->prepare("UPDATE ParvareshiClassServices SET Status = ?, AdminNotes = ?, UpdatedAt = NOW(), ApprovedByUserID = ? WHERE ServiceID = ?");
+        if($stmt_update_status){
+            $current_admin_id_pcs_status = get_current_user_id();
+            $stmt_update_status->bind_param("ssii", $new_status, $admin_notes, $current_admin_id_pcs_status, $service_id_to_update);
+            if($stmt_update_status->execute()){
+                $_SESSION['action_success_parvareshi'] = "وضعیت خدمت‌گزاری بروزرسانی شد.";
+                 // Notify teacher?
+                // create_notification($service_submitter_id, "وضعیت برنامه خدمت‌گزاری شما برای مناسبت X به Y تغییر کرد.", "user/parvareshi/my_class_services.php?service_id=".$service_id_to_update);
             } else {
-                 // Find key for predefined occasion
-                $event_key = array_search($data_cs_get['EventName'], $occasions);
-                if ($event_key !== false) {
-                    $service_log_to_edit['EventName'] = $event_key;
-                } else { // If it's a value but not a key (e.g. old data), treat as custom
-                     $service_log_to_edit['CustomEventName'] = $data_cs_get['EventName'];
-                     $service_log_to_edit['EventName'] = 'other';
-                }
+                $_SESSION['action_error_parvareshi'] = "خطا در بروزرسانی وضعیت: " . $stmt_update_status->error;
             }
-
-            if ($service_log_to_edit['ServiceDate']) {
-                try { $dt_obj_cs_edit = new DateTime($service_log_to_edit['ServiceDate']); $service_log_to_edit['ServiceDate'] = $dt_obj_cs_edit->format('Y-m-d'); } catch (Exception $e) { /* Keep original if invalid */ }
-            }
-            $edit_mode_cs = true;
-        } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => "گزارش خدمت‌گزاری برای ویرایش یافت نشد."]; }
-        $stmt_edit_cs_get->close();
-    } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => "خطا در بارگذاری گزارش: " . $conn->error]; }
-}
-
-
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit_class_service'])) {
-    if (!verify_csrf_token($_POST['csrf_token'] ?? '', 'parvareshi_class_services_action')) {
-        $errors_cs[] = 'خطای CSRF!';
-    } else {
-        $service_log_id = isset($_POST['service_log_id']) && is_numeric($_POST['service_log_id']) ? (int)$_POST['service_log_id'] : null;
-        $class_id_cs = isset($_POST['class_id_cs']) ? (int)$_POST['class_id_cs'] : null;
-        $event_name_key_cs = sanitize_input($_POST['event_name_cs'] ?? '');
-        $custom_event_name_cs = sanitize_input($_POST['custom_event_name_cs'] ?? '');
-        $service_description_cs = sanitize_input($_POST['service_description_cs'] ?? '');
-        $service_date_cs = sanitize_input($_POST['service_date_cs'] ?? '');
-        $location_cs = sanitize_input($_POST['location_cs'] ?? '');
-        $status_cs = sanitize_input($_POST['status_cs'] ?? 'planned');
-        $submitted_by_user_id_cs = get_current_user_id();
-        $photos_file_id_cs = isset($_POST['existing_photos_file_id']) ? (int)$_POST['existing_photos_file_id'] : null;
-
-        // Repopulate for sticky form
-        $service_log_to_edit = ['ServiceLogID' => $service_log_id, 'ClassID' => $class_id_cs, 'EventName' => $event_name_key_cs, 'CustomEventName' => $custom_event_name_cs, 'ServiceDescription' => $service_description_cs, 'ServiceDate' => $service_date_cs, 'Location' => $location_cs, 'Status' => $status_cs, 'PhotosFileID' => $photos_file_id_cs];
-        $edit_mode_cs = ($service_log_id !== null);
-
-        $final_event_name_cs = ($event_name_key_cs === 'other' && !empty($custom_event_name_cs)) ? $custom_event_name_cs : ($occasions[$event_name_key_cs] ?? $event_name_key_cs);
-
-        if (empty($class_id_cs) || !isset($available_classes_cs[$class_id_cs])) $errors_cs[] = "کلاس نامعتبر.";
-        if (empty($event_name_key_cs)) $errors_cs[] = "انتخاب مناسبت الزامی.";
-        if ($event_name_key_cs === 'other' && empty($custom_event_name_cs)) $errors_cs[] = "نام مناسبت سفارشی را وارد کنید.";
-        if (empty($service_description_cs)) $errors_cs[] = "شرح خدمت‌گزاری الزامی.";
-        if (empty($service_date_cs) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $service_date_cs)) $errors_cs[] = "تاریخ اجرا نامعتبر (YYYY-MM-DD).";
-        if (!array_key_exists($status_cs, $service_statuses)) $errors_cs[] = "وضعیت نامعتبر.";
-
-        // File upload logic
-        if (isset($_FILES['service_photos']) && $_FILES['service_photos']['error'] == UPLOAD_ERR_OK) {
-            // ... (Full file upload logic as in other modules, creating entry in Files table, getting $new_file_id)
-            // For example:
-            // $new_file_id = handle_file_upload($_FILES['service_photos'], 'class_service_photos', $submitted_by_user_id_cs);
-            // if ($new_file_id) { $photos_file_id_cs = $new_file_id; } else { $errors_cs[] = "خطا در آپلود عکس."; }
-            // For now, placeholder:
-            // $errors_cs[] = "آپلود فایل هنوز به طور کامل پیاده سازی نشده است.";
+            $stmt_update_status->close();
+        } else {
+             $_SESSION['action_error_parvareshi'] = "خطا در آماده سازی بروزرسانی وضعیت: " . $conn->error;
         }
-
-        if (empty($errors_cs)) {
-            if ($service_log_id) {
-                $stmt_cs_db = $conn->prepare("UPDATE ClassServices SET ClassID=?, EventName=?, ServiceDescription=?, ServiceDate=?, Location=?, Status=?, PhotosFileID=?, SubmittedByUserID=? WHERE ServiceLogID=?");
-                if($stmt_cs_db) { $stmt_cs_db->bind_param("isssssiii", $class_id_cs, $final_event_name_cs, $service_description_cs, $service_date_cs, $location_cs, $status_cs, $photos_file_id_cs, $submitted_by_user_id_cs, $service_log_id);
-                    if($stmt_cs_db->execute()) $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'گزارش ویرایش شد.'];
-                    else $errors_cs[] = "خطا ویرایش: " . $stmt_cs_db->error; $stmt_cs_db->close();
-                } else $errors_cs[] = "خطا آماده سازی ویرایش: " . $conn->error;
-            } else {
-                $stmt_cs_db = $conn->prepare("INSERT INTO ClassServices (ClassID, EventName, ServiceDescription, ServiceDate, Location, Status, PhotosFileID, SubmittedByUserID) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                if($stmt_cs_db) { $stmt_cs_db->bind_param("isssssii", $class_id_cs, $final_event_name_cs, $service_description_cs, $service_date_cs, $location_cs, $status_cs, $photos_file_id_cs, $submitted_by_user_id_cs);
-                    if($stmt_cs_db->execute()) $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'گزارش ثبت شد.'];
-                    else $errors_cs[] = "خطا ثبت: " . $stmt_cs_db->error; $stmt_cs_db->close();
-                } else $errors_cs[] = "خطا آماده سازی ثبت: " . $conn->error;
-            }
-            if(empty($errors_cs)) { regenerate_csrf_token('parvareshi_class_services_action'); header("Location: class_services.php"); exit; }
-        }
-    }
-    $csrf_token_class_services = regenerate_csrf_token('parvareshi_class_services_action');
-}
-
-// Handle Delete Request
-if (isset($_GET['delete_log_id']) && is_numeric($_GET['delete_log_id'])) {
-    if (!isset($_GET['csrf_token']) || !verify_csrf_token($_GET['csrf_token'], 'parvareshi_class_services_action')) {
-        $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطای CSRF!'];
     } else {
-        $delete_log_id_get = (int)$_GET['delete_log_id'];
-        // TODO: Delete associated file from server and Files table if PhotosFileID exists
-        $stmt_del_cs = $conn->prepare("DELETE FROM ClassServices WHERE ServiceLogID = ?");
-        if($stmt_del_cs){ $stmt_del_cs->bind_param("i", $delete_log_id_get);
-            if($stmt_del_cs->execute() && $stmt_del_cs->affected_rows > 0) $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'گزارش خدمت‌گزاری حذف شد.'];
-            else $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطا در حذف گزارش: '.$stmt_del_cs->error];
-            $stmt_del_cs->close();
-        } else $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطا آماده سازی حذف: '.$conn->error];
+        $_SESSION['action_error_parvareshi'] = "اطلاعات نامعتبر برای بروزرسانی وضعیت.";
     }
-    regenerate_csrf_token('parvareshi_class_services_action');
-    header("Location: class_services.php"); exit;
+    header("Location: class_services.php?action=view&service_id=" . $service_id_to_update); // Redirect back to view
+    exit;
 }
 
 
-$service_logs_q_main = $conn->query("
-    SELECT cs.*, c.ClassName, c.AcademicYear, u.Username AS SubmitterUsername, f.FileName AS PhotoFileName, f.FilePath AS PhotoFilePath
-    FROM ClassServices cs
-    JOIN Classes c ON cs.ClassID = c.ClassID
-    LEFT JOIN Users u ON cs.SubmittedByUserID = u.UserID
-    LEFT JOIN Files f ON cs.PhotosFileID = f.FileID
-    ORDER BY cs.ServiceDate DESC, c.ClassName ASC LIMIT 50");
+if ($conn) {
+    if ($action_pcs === 'list') {
+        $sql_pcs_list = "SELECT pcs.ServiceID, pcs.OccasionName, pcs.ServiceType, pcs.ServiceDate, pcs.Status,
+                                c.ClassName, c.AcademicYear, u.Username as SubmitterUsername
+                         FROM ParvareshiClassServices pcs
+                         JOIN Classes c ON pcs.ClassID = c.ClassID
+                         LEFT JOIN Users u ON pcs.SubmittedByUserID = u.UserID
+                         WHERE 1=1";
+        $params_pcs_list = []; $types_pcs_list = "";
+        if ($filter_class_id_pcs_list) { $sql_pcs_list .= " AND pcs.ClassID = ?"; $params_pcs_list[] = $filter_class_id_pcs_list; $types_pcs_list .= "i"; }
+        if (!empty($filter_occasion_pcs_list)) { $sql_pcs_list .= " AND pcs.OccasionName LIKE ?"; $params_pcs_list[] = "%".$filter_occasion_pcs_list."%"; $types_pcs_list .= "s"; }
+        if (!empty($filter_status_pcs_list)) { $sql_pcs_list .= " AND pcs.Status = ?"; $params_pcs_list[] = $filter_status_pcs_list; $types_pcs_list .= "s"; }
+        $sql_pcs_list .= " ORDER BY pcs.ServiceDate DESC, c.ClassName ASC";
+
+        $stmt_pcs_list = $conn->prepare($sql_pcs_list);
+        if ($stmt_pcs_list) {
+            if (!empty($params_pcs_list)) $stmt_pcs_list->bind_param($types_pcs_list, ...$params_pcs_list);
+            if ($stmt_pcs_list->execute()) { $result_pcs_list = $stmt_pcs_list->get_result(); while ($row = $result_pcs_list->fetch_assoc()) $class_services_list_display[] = $row; }
+            else $form_errors_pcs_page['db_list'] = "خطا در اجرای کوئری: " . $stmt_pcs_list->error;
+            $stmt_pcs_list->close();
+        } else $form_errors_pcs_page['db_prepare'] = "خطا در آماده سازی کوئری: " . $conn->error;
+    } elseif ($action_pcs === 'view' && $service_id_pcs_url > 0) {
+        $page_title_pcs = "مشاهده جزئیات خدمت‌گزاری کلاس";
+        $stmt_details = $conn->prepare("SELECT pcs.*, c.ClassName, c.AcademicYear, u.Username as SubmitterUsername, u_app.Username as ApproverUsername
+                                        FROM ParvareshiClassServices pcs
+                                        JOIN Classes c ON pcs.ClassID = c.ClassID
+                                        LEFT JOIN Users u ON pcs.SubmittedByUserID = u.UserID
+                                        LEFT JOIN Users u_app ON pcs.ApprovedByUserID = u_app.UserID
+                                        WHERE pcs.ServiceID = ?");
+        if($stmt_details){
+            $stmt_details->bind_param("i", $service_id_pcs_url);
+            $stmt_details->execute();
+            $res_details = $stmt_details->get_result();
+            if(!($service_details_pcs = $res_details->fetch_assoc())){
+                $_SESSION['action_error_parvareshi'] = "برنامه خدمت‌گزاری یافت نشد.";
+                header("Location: class_services.php"); exit;
+            }
+            $stmt_details->close();
+        } else $form_errors_pcs_page['db_load_details'] = "خطا در بارگذاری جزئیات: " . $conn->error;
+    }
+} else $form_errors_pcs_page['db_conn_page'] = "خطا در اتصال به پایگاه داده.";
 ?>
-<div class="page-header"><h1>مدیریت خدمت‌گزاری کلاس‌ها</h1>
-    <div class="page-header-actions"> <a href="rental_items.php" class="btn btn-info">مدیریت کرایه‌چی</a> <a href="events_general.php" class="btn btn-success">مناسبت‌های عمومی</a></div></div>
-
-<?php if (isset($_SESSION['flash_message'])) { /* ... Flash ... */ } ?>
-<?php if (!empty($errors_cs)): ?> <div class="alert alert-danger"><ul><?php foreach ($errors_cs as $err_cs_item_msg): ?><li><?php echo htmlspecialchars($err_cs_item_msg); ?></li><?php endforeach; ?></ul></div> <?php endif; ?>
-
-<div class="card shadow-sm mb-4">
-    <div class="card-header"><span class="card-title-text"><?php echo $edit_mode_cs ? 'ویرایش گزارش خدمت‌گزاری' : 'ثبت گزارش خدمت‌گزاری جدید'; ?></span></div>
-    <div class="card-body">
-        <form action="class_services.php<?php if($edit_mode_cs && $service_log_to_edit['ServiceLogID']) echo '?edit_log_id='.$service_log_to_edit['ServiceLogID']; ?>" method="POST" enctype="multipart/form-data">
-            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_class_services; ?>">
-            <?php if($edit_mode_cs && $service_log_to_edit['ServiceLogID']): ?><input type="hidden" name="service_log_id" value="<?php echo $service_log_to_edit['ServiceLogID']; ?>"><?php endif; ?>
-            <?php if($edit_mode_cs && $service_log_to_edit['PhotosFileID']): ?><input type="hidden" name="existing_photos_file_id" value="<?php echo $service_log_to_edit['PhotosFileID']; ?>"><?php endif; ?>
-
-            <div class="form-row">
-                <div class="form-group col-md-4"><label for="class_id_cs_form">کلاس <span class="text-danger">*</span></label><select name="class_id_cs" id="class_id_cs_form" class="form-control custom-select" required><option value="">-- انتخاب --</option><?php foreach($available_classes_cs as $cid_cs_f => $cdata_cs_f): ?><option value="<?php echo $cid_cs_f; ?>" <?php if($service_log_to_edit['ClassID'] == $cid_cs_f) echo 'selected';?>><?php echo htmlspecialchars($cdata_cs_f['ClassName'] . ' (' . $cdata_cs_f['AcademicYear'] . ')'); ?></option><?php endforeach; ?></select></div>
-                <div class="form-group col-md-4"><label for="event_name_cs_form">مناسبت <span class="text-danger">*</span></label><select name="event_name_cs" id="event_name_cs_form" class="form-control custom-select" required onchange="document.getElementById('custom_event_name_cs_group').style.display = (this.value === 'other' ? 'block' : 'none');"><option value="">-- انتخاب --</option><?php foreach($occasions as $okey_f => $oval_f): ?><option value="<?php echo $okey_f; ?>" <?php if($service_log_to_edit['EventName'] == $okey_f || ($service_log_to_edit['EventName'] === 'other' && $service_log_to_edit['CustomEventName'] == $oval_f)) echo 'selected';?>><?php echo $oval_f; ?></option><?php endforeach; ?></select></div>
-                <div class="form-group col-md-4" id="custom_event_name_cs_group" style="<?php echo ($service_log_to_edit['EventName'] ?? '') === 'other' ? 'display:block;' : 'display:none;'; ?>"><label for="custom_event_name_cs_input">نام مناسبت سفارشی</label><input type="text" name="custom_event_name_cs" id="custom_event_name_cs_input" class="form-control" value="<?php echo htmlspecialchars($service_log_to_edit['CustomEventName'] ?? '');?>"></div>
-            </div>
-            <div class="form-group"><label for="service_description_cs_form">شرح <span class="text-danger">*</span></label><textarea name="service_description_cs" id="service_description_cs_form" class="form-control" rows="3" required><?php echo htmlspecialchars($service_log_to_edit['ServiceDescription']);?></textarea></div>
-            <div class="form-row">
-                <div class="form-group col-md-4"><label for="service_date_cs_form">تاریخ اجرا <span class="text-danger">*</span></label><input type="text" name="service_date_cs" id="service_date_cs_form" class="form-control persian-date-picker" placeholder="YYYY-MM-DD" value="<?php echo htmlspecialchars($service_log_to_edit['ServiceDate']);?>" required></div>
-                <div class="form-group col-md-4"><label for="location_cs_form">مکان</label><input type="text" name="location_cs" id="location_cs_form" class="form-control" value="<?php echo htmlspecialchars($service_log_to_edit['Location']);?>"></div>
-                <div class="form-group col-md-4"><label for="status_cs_form">وضعیت <span class="text-danger">*</span></label><select name="status_cs" id="status_cs_form" class="form-control custom-select" required><?php foreach($service_statuses as $skey_f => $sval_f):?><option value="<?php echo $skey_f;?>" <?php if($service_log_to_edit['Status'] == $skey_f) echo 'selected';?>><?php echo $sval_f;?></option><?php endforeach;?></select></div>
-            </div>
-            <div class="form-group"><label for="service_photos_upload">آپلود عکس</label><input type="file" name="service_photos" id="service_photos_upload" class="form-control-file">
-            <?php if($edit_mode_cs && $service_log_to_edit['PhotosFileID'] && isset($service_log_to_edit['PhotoFilePath'])): ?>
-                <small class="form-text text-muted">فایل فعلی: <a href="/my_site/<?php echo htmlspecialchars(ltrim($service_log_to_edit['PhotoFilePath'],'/')); ?>" target="_blank"><?php echo htmlspecialchars($service_log_to_edit['PhotoFileName'] ?? 'مشاهده فایل');?></a>. برای جایگزینی، فایل جدید انتخاب کنید.</small>
-            <?php endif; ?>
-            </div>
-            <button type="submit" name="submit_class_service" class="btn btn-primary"><?php echo $edit_mode_cs ? 'ذخیره تغییرات' : 'ثبت گزارش'; ?></button>
-             <?php if ($edit_mode_cs): ?><a href="class_services.php" class="btn btn-outline-secondary">لغو ویرایش</a><?php endif; ?>
-        </form>
+<div class="page-header">
+    <h1><?php echo $page_title_pcs; ?></h1>
+    <div class="page-header-actions">
+        <a href="index.php" class="btn btn-outline-secondary"><em class="bi bi-house-door icon"></em> داشبورد پرورشی</a>
+        <?php if($action_pcs !== 'list'): ?>
+             <a href="class_services.php" class="btn btn-secondary ms-2"><em class="bi bi-list-ul icon"></em> لیست برنامه‌ها</a>
+        <?php endif; ?>
     </div>
 </div>
 
-<div class="card shadow-sm"><div class="card-header"><span class="card-title-text">لیست گزارش‌های خدمت‌گزاری (۵۰ اخیر)</span></div>
+<?php if (isset($_SESSION['action_success_parvareshi'])): ?><div class="alert alert-success alert-dismissible fade show"><button class="btn-close" data-bs-dismiss="alert"></button><?php echo $_SESSION['action_success_parvareshi']; unset($_SESSION['action_success_parvareshi']);?></div><?php endif;?>
+<?php if (!empty($form_errors_pcs_page)): ?><div class="alert alert-danger alert-dismissible fade show"><strong>خطا:</strong><ul class="mb-0 ps-3"><?php foreach($form_errors_pcs_page as $e_key_pcs=>$e_msg_pcs):echo "<li>".htmlspecialchars($e_msg_pcs)."</li>";endforeach;?></ul><button class="btn-close" data-bs-dismiss="alert"></button></div><?php endif;?>
+
+<?php if($action_pcs === 'list'): ?>
+<div class="filter-search-bar mb-3"><form method="GET" class="row g-2 align-items-center">
+    <div class="col-md-3"><select name="class_id_filter" class="form-select form-select-sm"><option value="">همه کلاس‌ها</option><?php foreach($available_classes_pcs_dd as $cls_f_pcs):?><option value="<?php echo $cls_f_pcs['ClassID'];?>" <?php echo ($filter_class_id_pcs_list==$cls_f_pcs['ClassID'])?'selected':'';?>><?php echo htmlspecialchars($cls_f_pcs['ClassName'].' ('.$cls_f_pcs['AcademicYear'].')');?></option><?php endforeach;?></select></div>
+    <div class="col-md-3"><input type="text" name="occasion_filter" class="form-control form-control-sm" placeholder="نام مناسبت..." value="<?php echo htmlspecialchars($filter_occasion_pcs_list); ?>"></div>
+    <div class="col-md-3"><select name="status_filter" class="form-select form-select-sm"><option value="">همه وضعیت‌ها</option><?php foreach($service_statuses_pcs_map as $sk_f_pcs=>$sv_f_pcs):?><option value="<?php echo $sk_f_pcs;?>" <?php echo ($filter_status_pcs_list===$sk_f_pcs)?'selected':'';?>><?php echo $sv_f_pcs;?></option><?php endforeach;?></select></div>
+    <div class="col-md-auto"><button type="submit" class="btn btn-info btn-sm">فیلتر</button></div>
+    <?php if($filter_class_id_pcs_list||!empty($filter_occasion_pcs_list)||!empty($filter_status_pcs_list)):?><div class="col-md-auto"><a href="class_services.php" class="btn btn-secondary btn-sm">پاک کردن</a></div><?php endif;?>
+</form></div>
+
+<div class="card"><div class="card-header"><span>لیست برنامه‌های خدمت‌گزاری (<?php echo count($class_services_list_display); ?> مورد)</span></div>
 <div class="card-body">
-    <?php if($service_logs_q_main && $service_logs_q_main->num_rows > 0): ?><div class="table-responsive"><table class="table table-sm table-striped table-hover">
-    <thead><tr><th>#</th><th>کلاس</th><th>مناسبت</th><th>تاریخ</th><th>وضعیت</th><th>ثبت کننده</th><th>عکس</th><th>عملیات</th></tr></thead><tbody>
-    <?php $log_row_idx = 1; while($log_item = $service_logs_q_main->fetch_assoc()): ?>
-    <tr><td><?php echo $log_row_idx++; ?></td><td><?php echo htmlspecialchars($log_item['ClassName']);?> <small>(<?php echo htmlspecialchars($log_item['AcademicYear']);?>)</small></td><td><?php echo htmlspecialchars($log_item['EventName']);?></td><td><?php echo to_jalali($log_item['ServiceDate'],'yyyy/MM/dd');?></td><td><span class="badge badge-<?php echo $status_badge_cs[$log_item['Status']] ?? 'light';?> p-1"><?php echo $service_statuses[$log_item['Status']] ?? $log_item['Status'];?></span></td><td><small><?php echo htmlspecialchars($log_item['SubmitterUsername'] ?? '-');?></small></td>
-    <td><?php if($log_item['PhotosFileID'] && $log_item['PhotoFilePath']):?><a href="/my_site/<?php echo htmlspecialchars(ltrim($log_item['PhotoFilePath'],'/'));?>" target="_blank" class="btn btn-xs btn-outline-success py-0 px-1">نمایش</a><?php else: echo '-'; endif;?></td>
-    <td class="actions-cell"> <a href="class_services.php?edit_log_id=<?php echo $log_item['ServiceLogID'];?>" class="btn btn-xs btn-warning" title="ویرایش"><svg class="icon" width="12" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a>
-    <a href="class_services.php?delete_log_id=<?php echo $log_item['ServiceLogID'];?>&csrf_token=<?php echo $csrf_token_class_services; ?>" class="btn btn-xs btn-danger" title="حذف" onclick="return confirm('آیا از حذف این گزارش مطمئن هستید؟');"><svg class="icon" width="12" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></a>
-    </td></tr>
-    <?php endwhile; ?></tbody></table></div>
-    <?php else: ?><p class="text-muted">هنوز گزارشی ثبت نشده.</p><?php endif; if($service_logs_q_main) $service_logs_q_main->close(); ?>
+    <?php if(empty($class_services_list_display)): ?><p class="text-center text-muted py-3">هیچ برنامه‌ای یافت نشد.</p>
+    <?php else: ?><div class="table-responsive"><table class="table table-hover table-sm">
+        <thead class="table-light"><tr><th>کلاس</th><th>مناسبت</th><th>نوع خدمت</th><th>تاریخ</th><th>وضعیت</th><th>ثبت توسط</th><th class="actions-column">جزئیات</th></tr></thead>
+        <tbody><?php foreach($class_services_list_display as $s_item): ?>
+            <tr><td><?php echo htmlspecialchars($s_item['ClassName'].' ('.$s_item['AcademicYear'].')'); ?></td>
+            <td><?php echo htmlspecialchars($s_item['OccasionName']); ?></td>
+            <td><?php echo htmlspecialchars($s_item['ServiceType']); ?></td>
+            <td><?php echo to_jalali($s_item['ServiceDate'], 'yyyy/MM/dd'); ?></td>
+            <td><span class="badge bg-<?php echo get_pcs_status_badge_class($s_item['Status']); ?>"><?php echo $service_statuses_pcs_map[$s_item['Status']] ?? $s_item['Status']; ?></span></td>
+            <td><?php echo htmlspecialchars($s_item['SubmitterUsername'] ?: '---'); ?></td>
+            <td class="actions-cell"><a href="?action=view&service_id=<?php echo $s_item['ServiceID']; ?>" class="btn btn-sm btn-outline-primary" title="مشاهده جزئیات و فایل‌ها"><em class="bi bi-eye-fill"></em></a></td></tr>
+        <?php endforeach; ?></tbody>
+    </table></div><?php endif; ?>
 </div></div>
-<link rel="stylesheet" href="https://unpkg.com/persian-datepicker@latest/dist/css/persian-datepicker.min.css"/>
-<script src="https://unpkg.com/persian-datepicker@latest/dist/js/persian-datepicker.min.js"></script>
-<script> /* Datepicker init, alert dismissal ... */
-document.addEventListener('DOMContentLoaded', function() { document.querySelectorAll(".persian-date-picker").forEach(function(el){ new persianDatepicker(el, { format: 'YYYY-MM-DD', autoClose: true, observer: true, calendar:{ persian: { locale: 'fa' } } });});});
-</script>
-<style>.badge.p-1{padding:0.25em 0.4em !important; font-size:0.8em !important;}</style>
+
+<?php elseif($action_pcs === 'view' && $service_details_pcs):
+    $csrf_token_status_update = generate_csrf_token('update_service_status_'.$service_details_pcs['ServiceID']);
+?>
+<div class="card">
+    <div class="card-header"><h5 class="mb-0">جزئیات خدمت‌گزاری: <?php echo htmlspecialchars($service_details_pcs['OccasionName'] . " - کلاس " . $service_details_pcs['ClassName']);?></h5></div>
+    <div class="card-body">
+        <dl class="row">
+            <dt class="col-sm-3">کلاس:</dt><dd class="col-sm-9"><?php echo htmlspecialchars($service_details_pcs['ClassName'].' ('.$service_details_pcs['AcademicYear'].')'); ?></dd>
+            <dt class="col-sm-3">مناسبت:</dt><dd class="col-sm-9"><?php echo htmlspecialchars($service_details_pcs['OccasionName']); ?></dd>
+            <dt class="col-sm-3">نوع خدمت:</dt><dd class="col-sm-9"><?php echo htmlspecialchars($service_details_pcs['ServiceType']); ?></dd>
+            <dt class="col-sm-3">تاریخ برگزاری:</dt><dd class="col-sm-9"><?php echo to_jalali($service_details_pcs['ServiceDate'],'yyyy/MM/dd'); ?></dd>
+            <dt class="col-sm-3">مکان:</dt><dd class="col-sm-9"><?php echo htmlspecialchars($service_details_pcs['Location'] ?: '---'); ?></dd>
+            <dt class="col-sm-3">وضعیت فعلی:</dt><dd class="col-sm-9"><span class="badge fs-6 bg-<?php echo get_pcs_status_badge_class($service_details_pcs['Status']); ?>"><?php echo $service_statuses_pcs_map[$service_details_pcs['Status']] ?? $service_details_pcs['Status']; ?></span></dd>
+            <dt class="col-sm-3">توضیحات مدرس:</dt><dd class="col-sm-9"><?php echo nl2br(htmlspecialchars($service_details_pcs['Description'] ?: '---')); ?></dd>
+            <dt class="col-sm-3">ثبت شده توسط:</dt><dd class="col-sm-9"><?php echo htmlspecialchars($service_details_pcs['SubmitterUsername'] ?: '---'); ?> در <?php echo to_jalali($service_details_pcs['SubmittedAt'],'yyyy/MM/dd HH:mm'); ?></dd>
+            <?php if($service_details_pcs['AdminNotes']): ?>
+                <dt class="col-sm-3 text-primary">یادداشت ادمین:</dt><dd class="col-sm-9 text-primary"><?php echo nl2br(htmlspecialchars($service_details_pcs['AdminNotes'])); ?></dd>
+            <?php endif; ?>
+             <?php if($service_details_pcs['ApprovedByUserID']): ?>
+                <dt class="col-sm-3">تایید/بررسی نهایی توسط:</dt><dd class="col-sm-9"><?php echo htmlspecialchars($service_details_pcs['ApproverUsername'] ?: '---'); ?> در <?php echo to_jalali($service_details_pcs['UpdatedAt'],'yyyy/MM/dd HH:mm'); ?></dd>
+            <?php endif; ?>
+        </dl>
+        <hr>
+        <h6>فایل‌های پیوست شده:</h6>
+        <p>
+            <?php if($service_details_pcs['GuestListPath']): ?>
+                <a href="<?php echo get_base_url() . htmlspecialchars($service_details_pcs['GuestListPath']); ?>" target="_blank" class="btn btn-sm btn-outline-info"><em class="bi bi-people-fill me-1"></em> لیست مهمانان</a>
+            <?php else: ?>
+                <span class="text-muted">لیست مهمانان پیوست نشده.</span>
+            <?php endif; ?>
+        </p>
+        <p>
+            <?php if($service_details_pcs['PhotosPath']):
+                // Assuming PhotosPath is a directory. Listing files would be more complex here.
+                // For simplicity, just provide a link if path exists.
+            ?>
+                <a href="<?php echo get_base_url() . htmlspecialchars($service_details_pcs['PhotosPath']); ?>" target="_blank" class="btn btn-sm btn-outline-success"><em class="bi bi-images me-1"></em> مشاهده پوشه تصاویر</a>
+                 <small class="text-muted d-block">توجه: این لینک ممکن است به یک پوشه اشاره کند. مدیریت نمایش تصاویر نیاز به پیاده‌سازی جداگانه دارد.</small>
+            <?php else: ?>
+                <span class="text-muted">تصاویر پیوست نشده‌اند.</span>
+            <?php endif; ?>
+        </p>
+        <hr>
+        <h6>تغییر وضعیت برنامه:</h6>
+        <form method="POST" action="class_services.php?action=view&service_id=<?php echo $service_id_pcs_url; ?>" class="row g-3 align-items-end">
+            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_status_update; // Use a specific token for this action ?>">
+            <input type="hidden" name="service_id" value="<?php echo $service_id_pcs_url; ?>">
+            <div class="col-md-4">
+                <label for="new_status_pcs" class="form-label">وضعیت جدید:</label>
+                <select name="new_status" id="new_status_pcs" class="form-select">
+                    <?php foreach($service_statuses_pcs_map as $s_key_upd => $s_val_upd): ?>
+                        <option value="<?php echo $s_key_upd; ?>" <?php echo ($service_details_pcs['Status'] === $s_key_upd) ? 'selected' : ''; ?>><?php echo $s_val_upd; ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label for="admin_notes_pcs" class="form-label">یادداشت ادمین (اختیاری):</label>
+                <input type="text" name="admin_notes" id="admin_notes_pcs" class="form-control" placeholder="دلیل تغییر وضعیت یا توضیحات بیشتر">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" name="update_service_status" class="btn btn-warning w-100">بروزرسانی</button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

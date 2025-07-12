@@ -1,295 +1,268 @@
 <?php
-// user/tickets/view.php
 require_once __DIR__ . '/../includes/header.php';
 
-$user_id = get_current_user_id();
-if (!$user_id) {
+$user_id_tv_page = get_current_user_id();
+$ticket_id_tv_url_page = isset($_GET['ticket_id']) ? (int)$_GET['ticket_id'] : 0;
+
+if (!$user_id_tv_page) {
     $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'برای مشاهده تیکت باید وارد شوید.'];
     header("Location: " . ($user_base_url ?? '/my_site/user') . "/auth/login.php");
     exit;
 }
+if ($ticket_id_tv_url_page <= 0) {
+    $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'شناسه تیکت نامعتبر است.'];
+    header("Location: index.php");
+    exit;
+}
 
-$ticket_id_to_view = null;
-$ticket_data = null;
-$ticket_replies = [];
-$errors = []; // For form submission errors primarily
+$page_title_ut_view_page = "مشاهده تیکت #" . $ticket_id_tv_url_page;
+$ticket_details_uv_page = null;
+$ticket_replies_uv_list = [];
+$errors_ut_view_page = [];
+$input_val_reply_uv_page = ['body' => ''];
 
-if (isset($_GET['ticket_id']) && is_numeric($_GET['ticket_id'])) {
-    $ticket_id_to_view = (int)$_GET['ticket_id'];
-    $csrf_token_ticket_reply = generate_csrf_token('ticket_reply_form_' . $ticket_id_to_view); // Generate token early
-
-    $stmt_ticket = $conn->prepare("
-        SELECT t.TicketID, t.Subject, t.Status, t.Priority, t.CreatedAt, t.UpdatedAt, t.CreatedByUserID,
-               d.DepartmentName AS AssignedDepartmentName
-        FROM Tickets t
-        LEFT JOIN Departments d ON t.AssignedToDepartmentID = d.DepartmentID
-        WHERE t.TicketID = ? AND t.CreatedByUserID = ?");
-    if ($stmt_ticket) {
-        $stmt_ticket->bind_param("ii", $ticket_id_to_view, $user_id);
-        $stmt_ticket->execute();
-        $result_ticket = $stmt_ticket->get_result();
-        if ($result_ticket->num_rows === 1) {
-            $ticket_data = $result_ticket->fetch_assoc();
-            $stmt_replies = $conn->prepare("
-                SELECT tr.ReplyID, tr.ReplyText, tr.CreatedAt AS ReplyDate, tr.FileID,
-                       u.UserID AS ReplierUserID, u.FirstName AS ReplierFirstName, u.LastName AS ReplierLastName, u.UserType AS ReplierUserType,
-                       f.FileName AS AttachedFileName, f.FilePath AS AttachedFilePath
-                FROM TicketReplies tr
-                JOIN Users u ON tr.UserID = u.UserID
-                LEFT JOIN Files f ON tr.FileID = f.FileID
-                WHERE tr.TicketID = ? ORDER BY tr.CreatedAt ASC");
-            if ($stmt_replies) {
-                $stmt_replies->bind_param("i", $ticket_id_to_view);
-                $stmt_replies->execute();
-                $result_replies = $stmt_replies->get_result();
-                while ($reply = $result_replies->fetch_assoc()) $ticket_replies[] = $reply;
-                $stmt_replies->close();
-
-                $stmt_mark_read = $conn->prepare("UPDATE TicketReplies SET IsReadByCreator = TRUE WHERE TicketID = ? AND UserID != ? AND IsReadByCreator = FALSE");
-                if ($stmt_mark_read) { $stmt_mark_read->bind_param("ii", $ticket_id_to_view, $user_id); $stmt_mark_read->execute(); $stmt_mark_read->close(); }
-            } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => "خطا بارگذاری پاسخ‌ها: " . $conn->error]; }
-        } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => "تیکت یافت نشد یا اجازه دسترسی ندارید."]; header("Location: index.php"); exit;}
-        $stmt_ticket->close();
-    } else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => "خطا بارگذاری تیکت: " . $conn->error]; header("Location: index.php"); exit;}
-} else { $_SESSION['flash_message'] = ['type' => 'danger', 'text' => "شناسه تیکت نامعتبر."]; header("Location: index.php"); exit;}
+$csrf_token_name_ticket_reply = 'ticket_reply_form_' . $ticket_id_tv_url_page; // Unique token per ticket view
+$csrf_token_ticket_reply_val = generate_csrf_token($csrf_token_name_ticket_reply);
 
 
-if ($_SERVER["REQUEST_METHOD"] == "POST" && $ticket_data) {
-    $action_token_name = 'ticket_reply_form_' . $ticket_id_to_view;
-    if (!verify_csrf_token($_POST['csrf_token'] ?? '', $action_token_name)) {
-        $errors['csrf'] = 'خطای CSRF!';
-    } else {
-        if (isset($_POST['submit_reply']) && $ticket_data['Status'] !== 'closed') {
-            $reply_body = sanitize_input($_POST['reply_body'] ?? '');
-            if (empty($reply_body)) $errors['reply_body'] = 'متن پاسخ نمی‌تواند خالی باشد.';
-            if (mb_strlen($reply_body, 'UTF-8') > 5000) $errors['reply_body'] = 'متن پاسخ (بیش از ۵۰۰۰ کاراکتر).';
+if ($conn) {
+    $stmt_ticket_uv_page = $conn->prepare("SELECT t.*, d.DepartmentName
+                                    FROM Tickets t
+                                    LEFT JOIN Departments d ON t.AssignedToDepartmentID = d.DepartmentID
+                                    WHERE t.TicketID = ? AND t.CreatedByUserID = ?");
+    if ($stmt_ticket_uv_page) {
+        $stmt_ticket_uv_page->bind_param("ii", $ticket_id_tv_url_page, $user_id_tv_page);
+        $stmt_ticket_uv_page->execute();
+        $result_ticket_uv_page = $stmt_ticket_uv_page->get_result();
+        if (!($ticket_details_uv_page = $result_ticket_uv_page->fetch_assoc())) {
+            $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'تیکت یافت نشد یا شما دسترسی به آن ندارید.'];
+            header("Location: index.php");
+            exit;
+        }
+        $stmt_ticket_uv_page->close();
 
-            $reply_attachment_file_id = null;
-            if (isset($_FILES['reply_attachment']) && $_FILES['reply_attachment']['error'] == UPLOAD_ERR_OK) {
-                $upload_dir_reply = __DIR__ . '/../../../uploads/ticket_attachments/';
-                if (!is_dir($upload_dir_reply)) { if (!mkdir($upload_dir_reply, 0775, true)) $errors['reply_attachment'] = 'خطا ایجاد پوشه آپلود.'; }
-                if (!isset($errors['reply_attachment'])) {
-                    $file_info_reply = pathinfo($_FILES['reply_attachment']['name']);
-                    $file_extension_reply = strtolower($file_info_reply['extension'] ?? '');
-                    $allowed_extensions_reply = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip', 'rar', 'xls', 'xlsx', 'ppt', 'pptx', 'mp3', 'wav', 'mp4', 'mov'];
-                    $max_file_size_reply = 10 * 1024 * 1024; // 10 MB
-                    if (!in_array($file_extension_reply, $allowed_extensions_reply)) $errors['reply_attachment'] = 'نوع فایل پیوست مجاز نیست.';
-                    elseif ($_FILES['reply_attachment']['size'] > $max_file_size_reply) $errors['reply_attachment'] = 'حجم فایل (بیش از 10MB).';
-                    else {
-                        $safe_original_filename_reply = preg_replace('/[^A-Za-z0-9_\-\.ء-ي]/u', '_', basename($_FILES['reply_attachment']['name']));
-                        $new_filename_reply = uniqid('ticket_reply_', true) . '_' . $safe_original_filename_reply;
-                        $upload_path_reply = $upload_dir_reply . $new_filename_reply;
-                        if (move_uploaded_file($_FILES['reply_attachment']['tmp_name'], $upload_path_reply)) {
-                            $stmt_file_reply = $conn->prepare("INSERT INTO Files (FileName, FilePath, FileType, FileSize, UploadedByUserID, UploadDate, AssociatedEntityType) VALUES (?, ?, ?, ?, ?, NOW(), 'ticket_reply')");
-                            if ($stmt_file_reply) {
-                                $file_type_mime_reply = mime_content_type($upload_path_reply) ?: $_FILES['reply_attachment']['type'];
-                                $file_size_bytes_reply = $_FILES['reply_attachment']['size'];
-                                $relative_path_reply = 'uploads/ticket_attachments/' . $new_filename_reply;
-                                $stmt_file_reply->bind_param("sssis", $safe_original_filename_reply, $relative_path_reply, $file_type_mime_reply, $file_size_bytes_reply, $user_id);
-                                if ($stmt_file_reply->execute()) $reply_attachment_file_id = $stmt_file_reply->insert_id;
-                                else $errors['reply_attachment'] = "خطا ذخیره فایل: " . $stmt_file_reply->error;
-                                $stmt_file_reply->close();
-                            } else { $errors['reply_attachment'] = "خطا آماده سازی فایل: " . $conn->error; }
-                        } else { $errors['reply_attachment'] = 'خطا آپلود فایل.'; }
-                    }
-                }
-            } elseif (isset($_FILES['reply_attachment']) && $_FILES['reply_attachment']['error'] != UPLOAD_ERR_NO_FILE) {
-                 $errors['reply_attachment'] = 'خطا آپلود فایل (کد: '.$_FILES['reply_attachment']['error'].')';
+        // Mark admin replies as read by creator (user) upon viewing
+        $stmt_mark_read_page = $conn->prepare("UPDATE TicketReplies SET IsReadByCreator = TRUE WHERE TicketID = ? AND IsAdminReply = TRUE AND IsReadByCreator = FALSE");
+        if($stmt_mark_read_page){ $stmt_mark_read_page->bind_param("i", $ticket_id_tv_url_page); $stmt_mark_read_page->execute(); $stmt_mark_read_page->close(); }
+
+        $stmt_replies_uv_page = $conn->prepare(
+            "SELECT tr.*, u.Username as ReplierUsername, u.FirstName as ReplierFirstName, u.LastName as ReplierLastName, f.FileName, f.FilePath, f.FileSize
+             FROM TicketReplies tr
+             LEFT JOIN Users u ON tr.UserID = u.UserID  -- Changed from JOIN to LEFT JOIN in case user is deleted but replies remain
+             LEFT JOIN Files f ON tr.FileID = f.FileID
+             WHERE tr.TicketID = ?
+             ORDER BY tr.CreatedAt ASC"
+        );
+        if ($stmt_replies_uv_page) {
+            $stmt_replies_uv_page->bind_param("i", $ticket_id_tv_url_page);
+            $stmt_replies_uv_page->execute();
+            $result_replies_uv_page = $stmt_replies_uv_page->get_result();
+            while ($row_r_page = $result_replies_uv_page->fetch_assoc()) {
+                $ticket_replies_uv_list[] = $row_r_page;
             }
+            $stmt_replies_uv_page->close();
+        } else { $errors_ut_view_page['db_replies'] = "خطا در بارگذاری پاسخ‌ها: " . $conn->error; }
+    } else { $errors_ut_view_page['db_ticket'] = "خطا در بارگذاری تیکت: " . $conn->error; }
+} else { $errors_ut_view_page['db_conn'] = "خطا در اتصال به پایگاه داده."; }
 
-            if (empty($errors)) {
+
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit_reply'])) {
+    $input_val_reply_uv_page['body'] = sanitize_input($_POST['reply_body'] ?? '');
+
+    if (!verify_csrf_token($_POST['csrf_token'] ?? '', $csrf_token_name_ticket_reply)) {
+        $errors_ut_view_page['csrf'] = 'خطای CSRF!';
+    } else {
+        $csrf_token_ticket_reply_val = regenerate_csrf_token($csrf_token_name_ticket_reply); // Regenerate after use
+        if (empty($input_val_reply_uv_page['body'])) $errors_ut_view_page['reply_body'] = 'متن پاسخ نمی‌تواند خالی باشد.';
+        if (mb_strlen($input_val_reply_uv_page['body'], 'UTF-8') > 5000) $errors_ut_view_page['reply_body'] = 'متن پاسخ طولانی (بیش از ۵۰۰۰ کاراکتر).';
+
+        $attachment_file_id_reply_page = null;
+        if (isset($_FILES['reply_attachment']) && $_FILES['reply_attachment']['error'] == UPLOAD_ERR_OK) {
+            $upload_dir_reply_page = __DIR__ . '/../../../uploads/ticket_attachments/';
+            if (!is_dir($upload_dir_reply_page)) { if (!mkdir($upload_dir_reply_page, 0775, true)) $errors_ut_view_page['reply_attachment'] = 'خطا ایجاد پوشه آپلود.'; }
+            if(!isset($errors_ut_view_page['reply_attachment'])){
+                // File validation logic (same as create.php, consider refactoring to a function)
+                $file_info_reply_page = pathinfo($_FILES['reply_attachment']['name']);
+                $file_extension_reply_page = strtolower($file_info_reply_page['extension'] ?? '');
+                $allowed_extensions_reply_page = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip', 'rar', 'xls', 'xlsx', 'mp3', 'wav', 'mp4', 'mov']; // Keep it consistent
+                $max_file_size_reply_page = 10 * 1024 * 1024; // 10 MB
+
+                if (!in_array($file_extension_reply_page, $allowed_extensions_reply_page)) $errors_ut_view_page['reply_attachment'] = 'نوع فایل پیوست مجاز نیست.';
+                elseif ($_FILES['reply_attachment']['size'] > $max_file_size_reply_page) $errors_ut_view_page['reply_attachment'] = 'حجم فایل پیوست (بیش از 10MB).';
+                else {
+                    $safe_orig_fname_reply_page = preg_replace('/[^A-Za-z0-9_\-\.ء-ي]/u', '_', basename($_FILES['reply_attachment']['name']));
+                    $new_fname_reply_page = uniqid('ticketreply_', true) . '_' . $safe_orig_fname_reply_page;
+                    $upload_path_reply_page = $upload_dir_reply_page . $new_fname_reply_page;
+                    if (move_uploaded_file($_FILES['reply_attachment']['tmp_name'], $upload_path_reply_page)) {
+                        $stmt_file_reply_page = $conn->prepare("INSERT INTO Files (FileName, FilePath, FileType, FileSize, UploadedByUserID, UploadDate, AssociatedEntityType) VALUES (?, ?, ?, ?, ?, NOW(), 'ticket_reply')");
+                        if ($stmt_file_reply_page) {
+                            $ft_mime_reply_page = mime_content_type($upload_path_reply_page) ?: $_FILES['reply_attachment']['type'];
+                            $fs_bytes_reply_page = $_FILES['reply_attachment']['size'];
+                            $rel_path_reply_page = 'uploads/ticket_attachments/' . $new_fname_reply_page;
+                            $stmt_file_reply_page->bind_param("sssis", $safe_orig_fname_reply_page, $rel_path_reply_page, $ft_mime_reply_page, $fs_bytes_reply_page, $user_id_tv_page);
+                            if ($stmt_file_reply_page->execute()) $attachment_file_id_reply_page = $stmt_file_reply_page->insert_id;
+                            else $errors_ut_view_page['reply_attachment'] = "خطا ذخیره فایل: " . $stmt_file_reply_page->error;
+                            $stmt_file_reply_page->close();
+                        } else { $errors_ut_view_page['reply_attachment'] = "خطا آماده سازی فایل: " . $conn->error; }
+                    } else { $errors_ut_view_page['reply_attachment'] = 'خطا در آپلود فایل.'; }
+                }
+            }
+        } elseif (isset($_FILES['reply_attachment']) && $_FILES['reply_attachment']['error'] != UPLOAD_ERR_NO_FILE) {
+            $errors_ut_view_page['reply_attachment'] = 'خطا در آپلود (کد: '.$_FILES['reply_attachment']['error'].')';
+        }
+
+        if (empty($errors_ut_view_page)) {
+            if ($conn && $ticket_details_uv_page) { // Ensure ticket details are loaded
                 $conn->begin_transaction();
                 try {
-                    $stmt_insert_reply = $conn->prepare("INSERT INTO TicketReplies (TicketID, UserID, ReplyText, CreatedAt, FileID, IsReadByCreator, IsReadByAdmin) VALUES (?, ?, ?, NOW(), ?, TRUE, FALSE)");
-                    if (!$stmt_insert_reply) throw new Exception("آماده سازی پاسخ ناموفق: " . $conn->error);
-                    $stmt_insert_reply->bind_param("iisi", $ticket_id_to_view, $user_id, $reply_body, $reply_attachment_file_id);
-                    if (!$stmt_insert_reply->execute()) throw new Exception("ثبت پاسخ ناموفق: " . $stmt_insert_reply->error);
-                    $stmt_insert_reply->close();
+                    $stmt_ins_reply_page = $conn->prepare("INSERT INTO TicketReplies (TicketID, UserID, ReplyText, CreatedAt, FileID, IsAdminReply, IsReadByAdmin, IsReadByCreator) VALUES (?, ?, ?, NOW(), ?, FALSE, FALSE, TRUE)");
+                    if (!$stmt_ins_reply_page) throw new Exception("آماده سازی پاسخ ناموفق: " . $conn->error);
 
-                    $new_status = ($ticket_data['Status'] == 'resolved' || $ticket_data['Status'] == 'closed') ? 'open' : 'in_progress';
-                    if ($ticket_data['Status'] == 'closed') $new_status = 'open';
-                    if ($ticket_data['Status'] == 'open' && $user_id != $ticket_data['CreatedByUserID']) $new_status = 'in_progress'; // If support replies to open ticket
+                    $stmt_ins_reply_page->bind_param("iisi", $ticket_id_tv_url_page, $user_id_tv_page, $input_val_reply_uv_page['body'], $attachment_file_id_reply_page);
+                    if (!$stmt_ins_reply_page->execute()) throw new Exception("ثبت پاسخ ناموفق: " . $stmt_ins_reply_page->error);
+                    $new_reply_id = $stmt_ins_reply_page->insert_id;
+                    $stmt_ins_reply_page->close();
 
-                    $stmt_update_ticket = $conn->prepare("UPDATE Tickets SET UpdatedAt = NOW(), Status = ? WHERE TicketID = ?");
-                    if (!$stmt_update_ticket) throw new Exception("آماده سازی آپدیت تیکت ناموفق: " . $conn->error);
-                    $stmt_update_ticket->bind_param("si", $new_status, $ticket_id_to_view);
-                    if (!$stmt_update_ticket->execute()) throw new Exception("آپدیت تیکت ناموفق: " . $stmt_update_ticket->error);
-                    $stmt_update_ticket->close();
+                    $new_ticket_status_page = 'pending_admin_reply';
+                    if ($ticket_details_uv_page['Status'] === 'closed' || $ticket_details_uv_page['Status'] === 'resolved') {
+                        $new_ticket_status_page = 'open';
+                    }
+                    $stmt_update_ticket_page = $conn->prepare("UPDATE Tickets SET LastUpdatedAt = NOW(), Status = ? WHERE TicketID = ?");
+                    if(!$stmt_update_ticket_page) throw new Exception("آماده سازی بروزرسانی تیکت ناموفق: ".$conn->error);
+                    $stmt_update_ticket_page->bind_param("si", $new_ticket_status_page, $ticket_id_tv_url_page);
+                    if(!$stmt_update_ticket_page->execute()) throw new Exception("بروزرسانی تیکت ناموفق: ".$stmt_update_ticket_page->error);
+                    $stmt_update_ticket_page->close();
 
-                    // --- Create Notification for Admins/Department after user reply ---
-                    $notification_message_admin_reply = "پاسخ جدیدی به تیکت #" . $ticket_id_to_view . " (\"" . htmlspecialchars($ticket_data['Subject']) . "\") توسط کاربر " . htmlspecialchars($_SESSION['username'] ?? 'ناشناس') . " ارسال شد.";
-                    $notification_link_admin_reply = ($admin_base_url ?? '/my_site/admin') . "/tickets/view.php?ticket_id=" . $ticket_id_to_view;
-                    $assigned_dept_id_for_notif_reply = $ticket_data['AssignedToDepartmentID'] ?? null;
+                    $conn->commit();
 
-                    if ($assigned_dept_id_for_notif_reply) {
-                        $stmt_dept_managers_reply_notify = $conn->prepare("SELECT UserID FROM UserDepartments WHERE DepartmentID = ? AND IsManager = TRUE");
-                        if ($stmt_dept_managers_reply_notify) {
-                            $stmt_dept_managers_reply_notify->bind_param("i", $assigned_dept_id_for_notif_reply);
-                            $stmt_dept_managers_reply_notify->execute();
-                            $res_dept_managers_reply_notify = $stmt_dept_managers_reply_notify->get_result();
-                            while ($manager_row_reply_notify = $res_dept_managers_reply_notify->fetch_assoc()) {
-                                create_notification($manager_row_reply_notify['UserID'], $notification_message_admin_reply, $notification_link_admin_reply, 'ticket_reply', $ticket_id_to_view);
-                            }
-                            $stmt_dept_managers_reply_notify->close();
-                        }
-                         // Also notify general admins
-                        $stmt_general_admins_reply = $conn->query("SELECT UserID FROM Users WHERE UserType = 'admin'");
-                        if($stmt_general_admins_reply){
-                            while($gen_admin_row_reply = $stmt_general_admins_reply->fetch_assoc()){
-                                create_notification($gen_admin_row_reply['UserID'], "[بخش: " . htmlspecialchars($ticket_data['AssignedDepartmentName'] ?? 'عمومی') . "] " . $notification_message_admin_reply, $notification_link_admin_reply, 'ticket_reply', $ticket_id_to_view);
-                            }
-                            $stmt_general_admins_reply->close();
-                        }
-                    } else {
-                        $stmt_all_admins_reply_notify = $conn->query("SELECT UserID FROM Users WHERE UserType = 'admin'");
-                        if ($stmt_all_admins_reply_notify) {
-                            while ($admin_row_reply_notify = $stmt_all_admins_reply_notify->fetch_assoc()) {
-                                create_notification($admin_row_reply_notify['UserID'], $notification_message_admin_reply, $notification_link_admin_reply, 'ticket_reply', $ticket_id_to_view);
-                            }
-                            $stmt_all_admins_reply_notify->close();
-                        }
+                    // --- Notification for Admins/Department ---
+                    $notification_message_admin_reply = "کاربر ".htmlspecialchars($_SESSION['username']??"ناشناس")." به تیکت #".$ticket_id_tv_url_page." پاسخ جدیدی ارسال کرد.";
+                    $notification_link_admin_reply = ($admin_base_url ?? '/my_site/admin')."/tickets/view.php?ticket_id=".$ticket_id_tv_url_page;
+                    $admin_ids_to_notify_reply = [];
+                    if($ticket_details_uv_page['AssignedToAdminID']) $admin_ids_to_notify_reply[] = $ticket_details_uv_page['AssignedToAdminID'];
+
+                    if($ticket_details_uv_page['AssignedToDepartmentID']){
+                        $stmt_dept_mngrs_reply = $conn->prepare("SELECT UserID FROM UserDepartments WHERE DepartmentID = ? AND IsManager = TRUE");
+                        if($stmt_dept_mngrs_reply){ $stmt_dept_mngrs_reply->bind_param("i", $ticket_details_uv_page['AssignedToDepartmentID']); $stmt_dept_mngrs_reply->execute(); $res_mngrs_reply = $stmt_dept_mngrs_reply->get_result(); while($m_row_reply = $res_mngrs_reply->fetch_assoc()) $admin_ids_to_notify_reply[] = $m_row_reply['UserID']; $stmt_dept_mngrs_reply->close();}
+                    }
+                    if(empty($admin_ids_to_notify_reply)){ // If no specific admin/dept manager, notify all admins
+                        $stmt_all_admins_reply_page = $conn->query("SELECT UserID FROM Users WHERE UserType = 'admin' AND IsActive = TRUE");
+                        if ($stmt_all_admins_reply_page) while ($admin_r_page = $stmt_all_admins_reply_page->fetch_assoc()) $admin_ids_to_notify_reply[] = $admin_r_page['UserID'];
+                    }
+                    foreach(array_unique($admin_ids_to_notify_reply) as $admin_id_notify_reply) {
+                        create_notification($admin_id_notify_reply, $notification_message_admin_reply, $notification_link_admin_reply, 'ticket_reply', $new_reply_id); // Use new_reply_id for context
                     }
                     // --- End Notification ---
 
-                    $conn->commit();
                     $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'پاسخ شما با موفقیت ثبت شد.'];
-                    header("Location: view.php?ticket_id=" . $ticket_id_to_view); exit;
-                } catch (Exception $e) { $conn->rollback(); $errors['db_reply'] = "خطای دیتابیس: " . $e->getMessage(); }
-            }
-        } elseif (isset($_POST['close_ticket_action']) && $ticket_data['Status'] !== 'closed') {
-            $stmt_close = $conn->prepare("UPDATE Tickets SET Status = 'closed', UpdatedAt = NOW() WHERE TicketID = ? AND CreatedByUserID = ?");
-            if ($stmt_close) {
-                $stmt_close->bind_param("ii", $ticket_id_to_view, $user_id);
-                if ($stmt_close->execute() && $stmt_close->affected_rows > 0) {
-                     $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'تیکت با موفقیت بسته شد.'];
-                     header("Location: view.php?ticket_id=" . $ticket_id_to_view); exit;
-                } else { $errors['close_ticket'] = "خطا در بستن تیکت: " . $stmt_close->error; }
-                $stmt_close->close();
-            } else { $errors['close_ticket'] = "خطا آماده سازی: " . $conn->error; }
+                    header("Location: view.php?ticket_id=" . $ticket_id_tv_url_page);
+                    exit;
+                } catch (Exception $e_reply) { $conn->rollback(); $errors_ut_view_page['db_error'] = "خطای دیتابیس: " . $e_reply->getMessage(); }
+            } else { $errors_ut_view_page['db_conn_reply'] = "خطا در اتصال به پایگاه داده."; }
         }
     }
-    $csrf_token_ticket_reply = regenerate_csrf_token('ticket_reply_form_' . $ticket_id_to_view);
 }
 
-$status_persian_map = ['open' => 'باز', 'in_progress' => 'در حال بررسی', 'resolved' => 'حل شده', 'closed' => 'بسته شده', 'urgent' => 'فوری'];
-$priority_persian_map = ['low' => 'کم', 'medium' => 'متوسط', 'high' => 'زیاد', 'urgent' => 'فوری'];
-$status_badge_map = ['open' => 'info', 'in_progress' => 'warning', 'resolved' => 'success', 'closed' => 'secondary', 'urgent' => 'danger'];
+$priority_display_map_uv_page = ['low' => 'کم', 'medium' => 'متوسط', 'high' => 'زیاد', 'urgent' => 'فوری'];
+$ticket_statuses_map_uv_page = $ticket_statuses_user_map_display; // Use the map defined earlier
+
 ?>
 <div class="page-header">
-    <h1>مشاهده تیکت #<?php echo $ticket_id_to_view; ?>: <?php echo htmlspecialchars($ticket_data['Subject'] ?? '...'); ?></h1>
-    <div class="page-header-actions">
-        <a href="index.php" class="btn btn-secondary">
-            <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-            <span>بازگشت به لیست</span>
-        </a>
+    <h1><?php echo $page_title_ut_view_page; ?></h1>
+    <div class="page-header-actions"><a href="index.php" class="btn btn-secondary"><em class="bi bi-list-ul icon"></em> بازگشت به لیست تیکت‌ها</a></div>
+</div>
+
+<?php if (isset($_SESSION['flash_message'])): $flash_uv_page = $_SESSION['flash_message']; ?>
+    <div class="alert alert-<?php echo $flash_uv_page['type']; ?> alert-dismissible fade show" role="alert"><?php echo htmlspecialchars($flash_uv_page['text']); unset($_SESSION['flash_message']); ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+<?php endif; ?>
+<?php if (!empty($errors_ut_view_page)): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert"><strong>خطا:</strong><ul class="mb-0 ps-3"><?php foreach ($errors_ut_view_page as $err_uv_page): echo "<li>".htmlspecialchars($err_uv_page)."</li>"; endforeach; ?></ul><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+<?php endif; ?>
+
+<?php if ($ticket_details_uv_page): ?>
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-light py-3">
+        <h5 class="mb-0 d-flex justify-content-between align-items-center">
+            <?php echo htmlspecialchars($ticket_details_uv_page['Subject']); ?>
+            <span class="badge fs-sm bg-<?php echo $ticket_statuses_map_uv_page[$ticket_details_uv_page['Status']]['badge'] ?? 'secondary'; ?>"><?php echo $ticket_statuses_map_uv_page[$ticket_details_uv_page['Status']]['label'] ?? htmlspecialchars($ticket_details_uv_page['Status']); ?></span>
+        </h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6"><p><strong>شناسه تیکت:</strong> #<?php echo $ticket_details_uv_page['TicketID']; ?></p></div>
+            <div class="col-md-6"><p><strong>اولویت:</strong> <?php echo $priority_display_map_uv_page[$ticket_details_uv_page['Priority']] ?? htmlspecialchars($ticket_details_uv_page['Priority']); ?></p></div>
+            <div class="col-md-6"><p><strong>بخش مربوطه:</strong> <?php echo htmlspecialchars($ticket_details_uv_page['DepartmentName'] ?: 'پشتیبانی عمومی'); ?></p></div>
+            <div class="col-md-6"><p><strong>تاریخ ایجاد:</strong> <?php echo to_jalali($ticket_details_uv_page['CreatedAt'], 'yyyy/MM/dd HH:mm'); ?></p></div>
+        </div>
     </div>
 </div>
 
-<?php if (isset($_SESSION['flash_message'])): $flash = $_SESSION['flash_message']; unset($_SESSION['flash_message']); ?>
-     <div class="alert alert-<?php echo $flash['type']; ?> alert-dismissible fade show" role="alert"><?php echo $flash['text']; ?>
-     <button type="button" class="close" data-dismiss="alert" aria-label="Close" style="/* ... */"><span aria-hidden="true">&times;</span></button></div>
+<h5 class="mb-3 mt-4 pt-2 border-top">پیام‌های تیکت:</h5>
+<?php if (empty($ticket_replies_uv_list)): ?>
+    <p class="text-muted">هنوز پیامی برای این تیکت ثبت نشده است (این حالت نباید رخ دهد چون پیام اولیه کاربر باید موجود باشد).</p>
+<?php else: ?>
+    <?php foreach($ticket_replies_uv_list as $reply_item):
+        $is_admin_reply_item = (bool)$reply_item['IsAdminReply'];
+        $replier_name_display = $is_admin_reply_item ? 'پشتیبانی '.SITE_NAME : htmlspecialchars(trim(($reply_item['ReplierFirstName']??'').' '.($reply_item['ReplierLastName']??$_SESSION['username'])));
+        if(empty(trim($replier_name_display))) $replier_name_display = htmlspecialchars($reply_item['ReplierUsername'] ?? 'کاربر');
+    ?>
+    <div class="card mb-3 <?php echo $is_admin_reply_item ? 'border-info' : 'border-primary-user'; ?>">
+        <div class="card-header <?php echo $is_admin_reply_item ? 'bg-info-soft' : 'bg-primary-user-soft'; ?> py-2 px-3 d-flex justify-content-between align-items-center">
+            <strong class="<?php echo $is_admin_reply_item ? 'text-info' : 'text-primary-user'; ?>"><?php echo $replier_name_display; ?></strong>
+            <small class="text-muted"><?php echo to_jalali($reply_item['CreatedAt'], 'yyyy/MM/dd HH:mm'); ?></small>
+        </div>
+        <div class="card-body py-3 px-3">
+            <p style="white-space: pre-wrap;"><?php echo nl2br(htmlspecialchars($reply_item['ReplyText'])); ?></p>
+            <?php if ($reply_item['FileID'] && $reply_item['FileName'] && $reply_item['FilePath']): ?>
+                <p class="mt-2 mb-0 border-top pt-2">
+                    <em class="bi bi-paperclip"></em> پیوست:
+                    <a href="<?php echo get_base_url() . htmlspecialchars($reply_item['FilePath']); ?>" target="_blank" download="<?php echo htmlspecialchars($reply_item['FileName']); ?>">
+                        <?php echo htmlspecialchars($reply_item['FileName']); ?>
+                    </a>
+                    (<?php echo round(($reply_item['FileSize'] ?? 0) / 1024, 1); ?> KB)
+                </p>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php endforeach; ?>
 <?php endif; ?>
-<?php if (!empty($errors)): ?> <div class="alert alert-danger"><ul><?php foreach ($errors as $err_msg): ?><li><?php echo htmlspecialchars($err_msg); ?></li><?php endforeach; ?></ul></div> <?php endif; ?>
 
-<?php if ($ticket_data): ?>
-    <div class="card shadow-sm ticket-details-card mb-4">
-        <div class="card-header bg-light py-3">
-            <div class="row align-items-center">
-                <div class="col-md-7"><h5 class="mb-0"><strong>موضوع:</strong> <?php echo htmlspecialchars($ticket_data['Subject']); ?></h5></div>
-                <div class="col-md-5 text-md-left mt-2 mt-md-0">
-                    <span class="badge badge-lg badge-<?php echo $status_badge_map[$ticket_data['Status']] ?? 'light'; ?> p-2 mr-2">وضعیت: <?php echo $status_persian_map[$ticket_data['Status']] ?? htmlspecialchars($ticket_data['Status']); ?></span>
-                    <span class="badge badge-lg badge-light p-2">اولویت: <?php echo $priority_persian_map[$ticket_data['Priority']] ?? htmlspecialchars($ticket_data['Priority']); ?></span>
-                </div>
+<?php if ($ticket_details_uv_page['Status'] !== 'closed' && $ticket_details_uv_page['Status'] !== 'resolved'): ?>
+<div class="card shadow-sm mt-4">
+    <div class="card-header bg-light"><h5 class="mb-0">ارسال پاسخ جدید</h5></div>
+    <div class="card-body">
+        <form action="view.php?ticket_id=<?php echo $ticket_id_tv_url_page; ?>" method="POST" enctype="multipart/form-data" class="needs-validation" novalidate>
+            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_ticket_reply_val; ?>">
+            <div class="form-group mb-3">
+                <label for="reply_body_uv_form" class="form-label">متن پاسخ شما <span class="text-danger">*</span></label>
+                <textarea class="form-control <?php echo isset($errors_ut_view_page['reply_body']) ? 'is-invalid' : ''; ?>" id="reply_body_uv_form" name="reply_body" rows="6" required maxlength="5000"><?php echo htmlspecialchars($input_val_reply_uv_page['body']); ?></textarea>
+                <?php if (isset($errors_ut_view_page['reply_body'])): ?><div class="invalid-feedback"><?php echo $errors_ut_view_page['reply_body']; ?></div><?php endif; ?>
             </div>
-        </div>
-        <div class="card-body small">
-            <p class="mb-1"><strong>ایجاد شده:</strong> <?php echo to_jalali($ticket_data['CreatedAt'], 'yyyy/MM/dd HH:mm'); ?></p>
-            <p class="mb-1"><strong>آخرین بروزرسانی:</strong> <?php echo to_jalali($ticket_data['UpdatedAt'], 'yyyy/MM/dd HH:mm'); ?></p>
-            <?php if($ticket_data['AssignedDepartmentName']): ?><p class="mb-0"><strong>ارجاع به:</strong> <?php echo htmlspecialchars($ticket_data['AssignedDepartmentName']); ?></p><?php endif; ?>
-        </div>
-    </div>
-
-    <div class="ticket-replies-container">
-        <h4 class="mb-3 mt-4">پیام‌ها و پاسخ‌ها:</h4>
-        <?php if (!empty($ticket_replies)): ?>
-            <?php foreach ($ticket_replies as $reply): $is_own_reply = ($reply['ReplierUserID'] == $user_id); ?>
-            <div class="card mb-3 shadow-sm <?php echo $is_own_reply ? 'ticket-reply-user' : 'ticket-reply-other'; ?>">
-                <div class="card-header py-2 <?php echo $is_own_reply ? 'bg-primary-user text-white' : 'bg-light text-dark'; ?>">
-                    <strong><?php echo htmlspecialchars($reply['ReplierFirstName'] . ' ' . $reply['ReplierLastName']); ?></strong>
-                    <span class="small">(<?php echo ($reply['ReplierUserType'] == 'admin' || $reply['ReplierUserType'] == 'manager' || $reply['ReplierUserType'] == 'deputy' || $reply['ReplierUserType'] == 'member') ? 'پشتیبانی/ادمین' : 'شما'; ?>)</span>
-                    <small class="float-left text-<?php echo $is_own_reply ? 'white-50' : 'muted'; ?>"><?php echo to_jalali($reply['ReplyDate'], 'yyyy/MM/dd HH:mm'); ?></small>
-                </div>
-                <div class="card-body">
-                    <p class="reply-text"><?php echo nl2br(htmlspecialchars($reply['ReplyText'])); ?></p>
-                    <?php if ($reply['FileID'] && $reply['AttachedFileName'] && $reply['AttachedFilePath']): ?>
-                        <hr class="my-2"><p class="mb-0 attachment-link">
-                            <small><strong>پیوست:</strong> <a href="/my_site/<?php echo htmlspecialchars(ltrim($reply['AttachedFilePath'],'/')); ?>" target="_blank" download="<?php echo htmlspecialchars($reply['AttachedFileName']); ?>">
-                                <?php echo htmlspecialchars($reply['AttachedFileName']); ?>
-                                <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                            </a></small></p>
-                    <?php endif; ?>
-                </div>
+            <div class="form-group mb-3">
+                <label for="reply_attachment_uv_form" class="form-label">فایل پیوست (اختیاری)</label>
+                <input type="file" class="form-control <?php echo isset($errors_ut_view_page['reply_attachment']) ? 'is-invalid' : ''; ?>" id="reply_attachment_uv_form" name="reply_attachment">
+                <small class="form-text text-muted">حداکثر 10MB.</small>
+                <?php if (isset($errors_ut_view_page['reply_attachment'])): ?><div class="invalid-feedback d-block"><?php echo $errors_ut_view_page['reply_attachment']; ?></div><?php endif; ?>
             </div>
-            <?php endforeach; ?>
-        <?php else: ?> <p class="text-muted">هنوز پاسخی برای این تیکت ثبت نشده است.</p> <?php endif; ?>
-    </div>
-
-    <?php if ($ticket_data['Status'] !== 'closed'): ?>
-    <div class="card mt-4 shadow-sm">
-        <div class="card-header"><h5 class="mb-0">ارسال پاسخ جدید</h5></div>
-        <div class="card-body">
-            <form action="view.php?ticket_id=<?php echo $ticket_id_to_view; ?>" method="POST" enctype="multipart/form-data" class="needs-validation" novalidate>
-                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_ticket_reply; ?>">
-                <div class="form-group">
-                    <label for="reply_body" class="sr-only">متن پاسخ شما</label>
-                    <textarea class="form-control form-control-lg <?php echo isset($errors['reply_body']) ? 'is-invalid' : ''; ?>" id="reply_body" name="reply_body" rows="6" required maxlength="5000" placeholder="پاسخ خود را اینجا بنویسید..."></textarea>
-                    <?php if (isset($errors['reply_body'])): ?><div class="invalid-feedback"><?php echo $errors['reply_body']; ?></div><?php endif; ?>
-                </div>
-                <div class="form-group">
-                    <label for="reply_attachment" class="sr-only">فایل پیوست</label>
-                    <input type="file" class="form-control-file <?php echo isset($errors['reply_attachment']) ? 'is-invalid' : ''; ?>" id="reply_attachment" name="reply_attachment">
-                     <small class="form-text text-muted">حداکثر حجم: 10MB.</small>
-                    <?php if (isset($errors['reply_attachment'])): ?><div class="invalid-feedback d-block"><?php echo $errors['reply_attachment']; ?></div><?php endif; ?>
-                </div>
-                <button type="submit" name="submit_reply" class="btn btn-primary-user btn-lg">
-                     <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13L2 9L22 2z"></path><path d="M22 2L15 22L11 13L2 9L22 2z"></path></svg>
-                    <span>ارسال پاسخ</span>
+            <div class="form-actions">
+                <button type="submit" name="submit_reply" class="btn btn-primary-user btn-lg px-4">
+                    <em class="bi bi-send-fill icon me-2"></em> ارسال پاسخ
                 </button>
-            </form>
-        </div>
-    </div>
-    <?php endif; ?>
-
-    <?php if ($ticket_data['Status'] === 'resolved' && $ticket_data['Status'] !== 'closed'): ?>
-    <div class="mt-4 text-center">
-         <form action="view.php?ticket_id=<?php echo $ticket_id_to_view; ?>" method="POST" style="display:inline;">
-            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_ticket_reply; ?>">
-            <button type="submit" name="close_ticket_action" class="btn btn-success btn-lg" onclick="return confirm('آیا از بستن این تیکت به عنوان حل شده رضایت دارید؟');">
-                <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-                <span>تیکت حل شد، بستن تیکت</span>
-            </button>
+            </div>
         </form>
     </div>
-    <?php elseif ($ticket_data['Status'] === 'closed'): ?>
-         <div class="alert alert-secondary mt-4 text-center">این تیکت بسته شده است. برای پیگیری مجدد، لطفاً <a href="create.php?subject=ادامه تیکت <?php echo $ticket_id_to_view; ?>" class="alert-link">یک تیکت جدید</a> با اشاره به این شناسه ایجاد کنید.</div>
-    <?php endif; ?>
+</div>
+<?php else: ?>
+    <div class="alert alert-warning text-center mt-4 lead">این تیکت بسته شده است و امکان ارسال پاسخ جدید وجود ندارد. در صورت نیاز، <a href="create.php" class="fw-bold">یک تیکت جدید ایجاد کنید</a>.</div>
+<?php endif; ?>
+
+<?php else: ?>
+    <div class="alert alert-danger">خطا: اطلاعات تیکت برای نمایش یافت نشد.</div>
 <?php endif; ?>
 <style>
-    .badge-lg { padding: 0.5em 0.8em; font-size: 0.9rem; }
-    .ticket-reply-user { border-right: 4px solid var(--user-panel-primary-color, #17a2b8); margin-right: 20px; margin-left: 0; }
-    .ticket-reply-user .card-header { background-color: var(--user-panel-primary-color, #17a2b8) !important; color: white !important; }
-    .ticket-reply-user .card-header small { color: rgba(255,255,255,0.85) !important; }
-    .ticket-reply-other { border-left: 4px solid #6c757d; margin-left: 20px; margin-right: 0; }
-    .ticket-reply-other .card-header { background-color: #f0f2f5 !important; }
-    html[dir="rtl"] .ticket-reply-user { border-left: 4px solid var(--user-panel-primary-color, #17a2b8); border-right: none; margin-left: 20px; margin-right: 0;}
-    html[dir="rtl"] .ticket-reply-other { border-right: 4px solid #6c757d; border-left: none; margin-right: 20px; margin-left: 0;}
-    html[dir="rtl"] .card-header small.float-left { float: right !important; }
-    .reply-text { white-space: pre-wrap; word-wrap: break-word; font-size: 0.95rem; line-height: 1.7;}
-    .attachment-link a { font-weight: 500; }
+    .bg-info-soft { background-color: #e7f5ff !important; border-left: 4px solid #0dcaf0; }
+    .bg-primary-user-soft { background-color: #f8f9fa !important; border-left: 4px solid #0d6efd; }
+    .text-primary-user { color: #0a58ca !important; }
+    .fs-xs { font-size: .78rem !important; }
 </style>
-<script> /* Basic Bootstrap validation */
-(function () { 'use strict'; var forms = document.querySelectorAll('.needs-validation');
-  Array.prototype.slice.call(forms).forEach(function (form) {
-  form.addEventListener('submit', function (event) { if (!form.checkValidity()) { event.preventDefault(); event.stopPropagation(); } form.classList.add('was-validated');}, false);});})();
-</script>
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

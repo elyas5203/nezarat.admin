@@ -1,450 +1,290 @@
 <?php
-// admin/forms/edit.php
 require_once __DIR__ . '/../includes/header.php';
 
-$csrf_token_form_edit = generate_csrf_token('form_edit_action');
-$errors = [];
-$form_id_to_edit = null;
-$form_data_for_form = null;
+$form_id_to_edit = isset($_GET['form_id']) ? (int)$_GET['form_id'] : 0;
 
-// Initialize input variables for repopulation and default values
-$input_form_name = '';
-$input_form_description = '';
-$input_department_id = '';
-$input_form_purpose = 'general';
-$input_fields_repopulate = [];
+$form_title = '';
+$form_description = '';
+$form_status = 'draft';
+// JSON string of fields: fetched from DB on GET, or from POST on validation error
+$form_fields_json_for_builder = '[]';
+$form_errors = [];
 
+if ($form_id_to_edit <= 0) {
+    $_SESSION['action_error'] = 'شناسه فرم نامعتبر است.';
+    header("Location: index.php");
+    exit;
+}
 
-$departments_query = $conn->query("SELECT DepartmentID, DepartmentName FROM Departments ORDER BY DepartmentName");
-$available_departments = [];
-if ($departments_query) { while($dept = $departments_query->fetch_assoc()) $available_departments[] = $dept; $departments_query->close(); }
+$csrf_token_name = 'edit_form_structure_' . $form_id_to_edit;
+$csrf_token = generate_csrf_token($csrf_token_name);
+$field_types_config = get_form_field_types_config();
 
-$field_type_options = [
-    'text' => 'متن کوتاه', 'textarea' => 'متن بلند', 'number' => 'عدد', 'date' => 'تاریخ',
-    'select' => 'لیست کشویی', 'radio' => 'گزینه‌های رادیویی', 'checkbox' => 'چک‌باکس‌ها',
-];
-// Form Purpose Options including new ones for parents module
-$form_purpose_options_display_edit = [
-    'general' => 'عمومی',
-    'self_assessment' => 'خوداظهاری مدرس',
-    'class_observation' => 'بازدید کلاسی',
-    'parent_survey' => 'نظرسنجی اولیا',
-    'service_report' => 'گزارش خدمت گزاری (پرورشی)',
-    'parents_meeting_observer_report' => 'گزارش ناظر جلسه اولیا',
-    'parents_meeting_teacher_report' => 'گزارش مدرس از جلسه اولیا',
-];
+// Fetch Form and Fields Data for Editing
+if ($conn) {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        $stmt_form_data = $conn->prepare("SELECT Title, Description, Status FROM Forms WHERE FormID = ?");
+        if ($stmt_form_data) {
+            $stmt_form_data->bind_param("i", $form_id_to_edit);
+            $stmt_form_data->execute();
+            $result_form = $stmt_form_data->get_result();
+            if ($form_db_data = $result_form->fetch_assoc()) {
+                $form_title = $form_db_data['Title'];
+                $form_description = $form_db_data['Description'];
+                $form_status = $form_db_data['Status'];
 
-
-if (isset($_GET['form_id']) && is_numeric($_GET['form_id'])) {
-    $form_id_to_edit = (int)$_GET['form_id'];
-    $stmt_fetch_form = $conn->prepare("SELECT FormID, FormName, Description, DepartmentID, FormPurpose FROM Forms WHERE FormID = ?");
-    if ($stmt_fetch_form) {
-        $stmt_fetch_form->bind_param("i", $form_id_to_edit);
-        $stmt_fetch_form->execute();
-        $result_form = $stmt_fetch_form->get_result();
-        if ($result_form->num_rows === 1) {
-            $form_data_for_form = $result_form->fetch_assoc();
-
-            $stmt_form_fields = $conn->prepare("SELECT FieldID, FieldName, FieldType, Options, IsRequired, SortOrder FROM FormFields WHERE FormID = ? ORDER BY SortOrder ASC, FieldID ASC");
-            if ($stmt_form_fields) {
-                $stmt_form_fields->bind_param("i", $form_id_to_edit);
-                $stmt_form_fields->execute();
-                $result_form_fields = $stmt_form_fields->get_result();
-                while ($field = $result_form_fields->fetch_assoc()) {
-                    $options_display = $field['Options'];
-                    if (in_array($field['FieldType'], ['select', 'radio', 'checkbox']) && !empty($field['Options'])) {
-                        $decoded_options = json_decode($field['Options'], true);
-                        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded_options)) {
-                            $options_display = implode("\n", $decoded_options);
-                        } else { $options_display = $field['Options']; }
+                $stmt_fields_data = $conn->prepare(
+                    "SELECT FieldLabel as label, FieldType as type, FieldOptions as options_json, IsRequired as required, Placeholder as placeholder, HelperText as helper_text, MinValue as min_value, MaxValue as max_value, MaxLength as max_length, FileTypes as file_types_str
+                     FROM FormFields WHERE FormID = ? ORDER BY SortOrder ASC"
+                );
+                if ($stmt_fields_data) {
+                    $stmt_fields_data->bind_param("i", $form_id_to_edit);
+                    $stmt_fields_data->execute();
+                    $result_fields = $stmt_fields_data->get_result();
+                    $fields_array_for_json = [];
+                    $field_id_counter = 0; // Simple counter for client-side unique IDs
+                    while ($field_row = $result_fields->fetch_assoc()) {
+                        $field_id_counter++;
+                        $current_field_data = [
+                            'id' => 'dbfield_' . $field_row['type'] . '_' . $field_id_counter . '_' . $form_id_to_edit,
+                            'label' => $field_row['label'],
+                            'type' => $field_row['type'],
+                            'required' => (bool)$field_row['required'],
+                            'placeholder' => $field_row['placeholder'] ?? '',
+                            'helper_text' => $field_row['helper_text'] ?? '',
+                            'options' => !empty($field_row['options_json']) ? (json_decode($field_row['options_json'], true) ?: []) : [],
+                            'min_value' => $field_row['min_value'] !== null ? (int)$field_row['min_value'] : null,
+                            'max_value' => $field_row['max_value'] !== null ? (int)$field_row['max_value'] : null,
+                            'max_length' => $field_row['max_length'] !== null ? (int)$field_row['max_length'] : null,
+                            'file_types' => !empty($field_row['file_types_str']) ? array_map('trim', explode(',', $field_row['file_types_str'])) : [],
+                        ];
+                        $fields_array_for_json[] = $current_field_data;
                     }
-                    $input_fields_repopulate[] = [
-                        'field_id' => $field['FieldID'],
-                        'field_name' => $field['FieldName'],
-                        'field_type' => $field['FieldType'],
-                        'field_options' => $options_display,
-                        'is_required' => $field['IsRequired'],
-                    ];
+                    $form_fields_json_for_builder = json_encode($fields_array_for_json, JSON_UNESCAPED_UNICODE);
+                    $stmt_fields_data->close();
+                } else {
+                    $form_errors['db_error'] = "خطا در بارگذاری فیلدهای فرم: " . $conn->error;
                 }
-                $stmt_form_fields->close();
+            } else {
+                $_SESSION['action_error'] = 'فرم با شناسه ' . htmlspecialchars($form_id_to_edit) . ' یافت نشد.';
+                header("Location: index.php");
+                exit;
             }
-            // Initialize general form input values if not a POST request
-            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-                $input_form_name = $form_data_for_form['FormName'];
-                $input_form_description = $form_data_for_form['Description'];
-                $input_department_id = $form_data_for_form['DepartmentID'];
-                $input_form_purpose = $form_data_for_form['FormPurpose'] ?? 'general';
-            }
-        } else { $errors['load_error'] = "فرم یافت نشد."; }
-        $stmt_fetch_form->close();
-    } else { $errors['load_error'] = "خطا بارگذاری فرم: " . $conn->error; }
-} elseif (!isset($_POST['form_id'])) {
-     $errors['load_error'] = "شناسه فرم نامعتبر.";
+            $stmt_form_data->close();
+        } else {
+            $form_errors['db_error'] = 'خطا در آماده سازی کوئری بارگذاری فرم: ' . $conn->error;
+        }
+    } else { // On POST, repopulate from POST data for display if validation fails
+        $form_title = sanitize_input($_POST['form_title'] ?? '');
+        $form_description = sanitize_input($_POST['form_description'] ?? '');
+        $form_status = in_array($_POST['form_status'] ?? 'draft', ['draft', 'published', 'archived']) ? $_POST['form_status'] : 'draft';
+        $form_fields_json_for_builder = $_POST['form_fields_json'] ?? '[]';
+    }
+} else {
+    $form_errors['db_error'] = 'خطا در اتصال به پایگاه داده.';
 }
 
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Repopulate general form info from POST for validation/sticky form
-    $input_form_name = sanitize_input($_POST['form_name'] ?? '');
-    $input_form_description = sanitize_input($_POST['form_description'] ?? '');
-    $input_department_id = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
-    $input_form_purpose = sanitize_input($_POST['form_purpose'] ?? 'general');
-    $form_id_from_post = isset($_POST['form_id']) ? (int)$_POST['form_id'] : null;
-
-    if ($form_id_from_post) $form_id_to_edit = $form_id_from_post;
-
-
-    // Repopulate fields from POST
-    $input_fields_repopulate = [];
-    if (isset($_POST['fields']) && is_array($_POST['fields'])) {
-        foreach ($_POST['fields'] as $posted_field) {
-            $input_fields_repopulate[] = [
-                'field_name' => sanitize_input($posted_field['field_name'] ?? ''),
-                'field_type' => sanitize_input($posted_field['field_type'] ?? ''),
-                'field_options' => sanitize_input($posted_field['field_options'] ?? ''),
-                'is_required' => isset($posted_field['is_required']) ? 1 : 0,
-            ];
-        }
-    }
-
-    if (!verify_csrf_token($_POST['csrf_token'] ?? '', 'form_edit_action')) {
-        $errors['csrf'] = 'خطای CSRF!';
-    } elseif (!$form_id_to_edit) { // Check if $form_id_to_edit is valid after POST
-        $errors['form_error'] = 'خطا: شناسه فرم برای ویرایش معتبر نیست.';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_form_structure'])) {
+    if (!isset($_POST['csrf_token']) || !verify_csrf_token($_POST['csrf_token'], $csrf_token_name)) {
+        $form_errors['csrf'] = 'خطای امنیتی CSRF.';
     } else {
-        if (empty($input_form_name)) $errors['form_name'] = 'عنوان فرم الزامی.';
-        else {
-            $stmt_check_form_name = $conn->prepare("SELECT FormID FROM Forms WHERE FormName = ? AND FormID != ?");
-            if($stmt_check_form_name) {
-                $stmt_check_form_name->bind_param("si", $input_form_name, $form_id_to_edit);
-                $stmt_check_form_name->execute();
-                if ($stmt_check_form_name->get_result()->num_rows > 0) $errors['form_name'] = 'فرم دیگری با این عنوان وجود دارد.';
-                $stmt_check_form_name->close();
-            } else { $errors['db_error'] = "خطا بررسی عنوان فرم: " . $conn->error; }
-        }
+        $csrf_token = regenerate_csrf_token($csrf_token_name);
 
-        $actual_department_id_for_db_edit = null;
-        if ($input_department_id !== null && $input_department_id != 0) {
-            $actual_department_id_for_db_edit = (int)$input_department_id;
-            $dept_exists_validation_edit = false;
-            foreach($available_departments as $ad_val_edit) if($ad_val_edit['DepartmentID'] == $actual_department_id_for_db_edit) $dept_exists_validation_edit = true;
-            if(!$dept_exists_validation_edit) $errors['department_id'] = "بخش نامعتبر.";
-        }
+        // Form general info already populated from POST handling section above
+        $updated_fields_json = $_POST['form_fields_json'] ?? '[]'; // This is the current state from form builder
+        $updated_fields_data = json_decode($updated_fields_json, true);
 
-        if (!array_key_exists($input_form_purpose, $form_purpose_options_display_edit)) {
-             $errors['form_purpose'] = "هدف/نوع فرم نامعتبر.";
-        }
-
-        if (empty($input_fields_repopulate)) $errors['fields_general'] = 'حداقل یک فیلد باید تعریف شود.';
-        else {
-            foreach ($input_fields_repopulate as $key => $field) {
-                if (empty($field['field_name'])) $errors["field_{$key}_name"] = "عنوان فیلد ".($key+1)." الزامی.";
-                if (empty($field['field_type'])) $errors["field_{$key}_type"] = "نوع فیلد ".($key+1)." الزامی.";
-                elseif (!array_key_exists($field['field_type'], $field_type_options)) $errors["field_{$key}_type"] = "نوع فیلد ".($key+1)." نامعتبر.";
-                if (in_array($field['field_type'], ['select', 'radio', 'checkbox']) && empty(trim($field['field_options']))) {
-                    $errors["field_{$key}_options"] = "گزینه‌ها برای فیلد ".($key+1)." الزامی.";
+        // Validations (similar to create.php)
+        if (empty($form_title)) $form_errors['form_title'] = "عنوان فرم نمی‌تواند خالی باشد.";
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($updated_fields_data)) {
+            $form_errors['form_fields_json'] = "ساختار فیلدهای فرم نامعتبر است (خطای JSON).";
+        } elseif (empty($updated_fields_data)) {
+            $form_errors['form_fields_json'] = "فرم باید حداقل شامل یک فیلد باشد.";
+        } else {
+            foreach ($updated_fields_data as $index => $field) {
+                if (empty(trim($field['label'] ?? ''))) {
+                    $form_errors['field_'.($index+1).'_label'] = "برچسب فیلد شماره ".($index+1)." نمی‌تواند خالی باشد.";
                 }
+                if (in_array($field['type'] ?? '', ['select', 'radio', 'checkbox']) && empty($field['options'] ?? [])) {
+                     $form_errors['field_'.($index+1).'_options'] = "گزینه‌ها برای فیلد انتخابی شماره ".($index+1)." (با برچسب: ".htmlspecialchars($field['label'] ?? 'بدون برچسب').") باید مشخص شوند.";
+                }
+                if (isset($field['label']) && mb_strlen($field['label']) > 255) $form_errors['field_'.($index+1).'_label_length'] = "برچسب فیلد ".($index+1)." طولانی است.";
             }
         }
 
-        if (empty($errors)) {
-            $conn->begin_transaction();
-            try {
-                $stmt_update_form = $conn->prepare("UPDATE Forms SET FormName = ?, Description = ?, DepartmentID = ?, FormPurpose = ? WHERE FormID = ?");
-                if(!$stmt_update_form) throw new Exception("آماده سازی آپدیت فرم ناموفق: " . $conn->error);
-                $stmt_update_form->bind_param("ssisi", $input_form_name, $input_form_description, $actual_department_id_for_db_edit, $input_form_purpose, $form_id_to_edit);
+        if (empty($form_errors)) {
+            if ($conn) {
+                $conn->begin_transaction();
+                try {
+                    $current_user_id = get_current_user_id();
 
-                if ($stmt_update_form->execute()) {
+                    $stmt_update_form = $conn->prepare("UPDATE Forms SET Title = ?, Description = ?, Status = ?, UpdatedAt = NOW(), UpdatedByUserID = ? WHERE FormID = ?");
+                    if (!$stmt_update_form) throw new Exception("خطا در آماده سازی کوئری بروزرسانی فرم: " . $conn->error);
+                    $stmt_update_form->bind_param("sssii", $form_title, $form_description, $form_status, $current_user_id, $form_id_to_edit);
+                    if (!$stmt_update_form->execute()) throw new Exception("خطا در بروزرسانی فرم: " . $stmt_update_form->error);
                     $stmt_update_form->close();
 
-                    $stmt_delete_old_fields = $conn->prepare("DELETE FROM FormFields WHERE FormID = ?");
-                    if(!$stmt_delete_old_fields) throw new Exception("آماده سازی حذف فیلدهای قدیمی ناموفق: " . $conn->error);
-                    $stmt_delete_old_fields->bind_param("i", $form_id_to_edit);
-                    if(!$stmt_delete_old_fields->execute()) throw new Exception("حذف فیلدهای قدیمی ناموفق: " . $stmt_delete_old_fields->error);
-                    $stmt_delete_old_fields->close();
+                    $stmt_delete_fields = $conn->prepare("DELETE FROM FormFields WHERE FormID = ?");
+                    if (!$stmt_delete_fields) throw new Exception("خطا در آماده سازی حذف فیلدهای قدیمی: " . $conn->error);
+                    $stmt_delete_fields->bind_param("i", $form_id_to_edit);
+                    if (!$stmt_delete_fields->execute()) throw new Exception("خطا در حذف فیلدهای قدیمی: " . $stmt_delete_fields->error);
+                    $stmt_delete_fields->close();
 
-                    $stmt_insert_field = $conn->prepare("INSERT INTO FormFields (FormID, FieldName, FieldType, Options, IsRequired, SortOrder) VALUES (?, ?, ?, ?, ?, ?)");
-                    if(!$stmt_insert_field) throw new Exception("آماده سازی فیلدهای جدید ناموفق: " . $conn->error);
-                    foreach ($input_fields_repopulate as $sort_order => $field_data) {
-                        $options_str = null;
-                        if (in_array($field_data['field_type'], ['select', 'radio', 'checkbox'])) {
-                            $options_array = array_map('trim', explode("\n", $field_data['field_options']));
-                            $options_array = array_values(array_filter($options_array));
-                            $options_str = !empty($options_array) ? json_encode($options_array, JSON_UNESCAPED_UNICODE) : null;
-                        }
-                        $is_req = $field_data['is_required'] ? 1 : 0;
-                        $stmt_insert_field->bind_param("isssii", $form_id_to_edit, $field_data['field_name'], $field_data['field_type'], $options_str, $is_req, $sort_order);
-                        if (!$stmt_insert_field->execute()) {
-                            throw new Exception("ذخیره فیلد '".$field_data['field_name']."' ناموفق: " . $stmt_insert_field->error);
-                        }
+                    $stmt_insert_field = $conn->prepare("INSERT INTO FormFields (FormID, FieldLabel, FieldType, FieldOptions, IsRequired, Placeholder, SortOrder, HelperText, MinValue, MaxValue, MaxLength, FileTypes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    if (!$stmt_insert_field) throw new Exception("خطا در آماده سازی کوئری فیلدها (ویرایش): " . $conn->error);
+
+                    foreach ($updated_fields_data as $order => $field) {
+                        $options_json = !empty($field['options']) ? json_encode($field['options'], JSON_UNESCAPED_UNICODE) : null;
+                        $is_required = (bool)($field['required'] ?? false);
+                        $placeholder = sanitize_input($field['placeholder'] ?? null);
+                        $field_label = sanitize_input($field['label']);
+                        $field_type = sanitize_input($field['type']);
+                        $helper_text = sanitize_input($field['helper_text'] ?? null);
+                        $min_val = isset($field['min_value']) && is_numeric($field['min_value']) ? (int)$field['min_value'] : null;
+                        $max_val = isset($field['max_value']) && is_numeric($field['max_value']) ? (int)$field['max_value'] : null;
+                        $max_len = isset($field['max_length']) && is_numeric($field['max_length']) ? (int)$field['max_length'] : null;
+                        $file_types_str = isset($field['file_types']) && is_array($field['file_types']) ? implode(',', $field['file_types']) : null;
+
+                        $stmt_insert_field->bind_param(
+                            "isssissssss",
+                            $form_id_to_edit, $field_label, $field_type, $options_json,
+                            $is_required, $placeholder, $order, $helper_text,
+                            $min_val, $max_val, $max_len, $file_types_str
+                        );
+                        if (!$stmt_insert_field->execute()) throw new Exception("خطا در ایجاد/بروزرسانی فیلد '" . htmlspecialchars($field_label) . "': " . $stmt_insert_field->error);
                     }
                     $stmt_insert_field->close();
+
                     $conn->commit();
-                    regenerate_csrf_token('form_edit_action');
-                     $_SESSION['flash_message'] = ['type' => 'success', 'text' => "فرم '" . htmlspecialchars($input_form_name) . "' با موفقیت ویرایش شد."];
-                    header("Location: index.php?action_status=success_edit");
+                    $_SESSION['action_success'] = "فرم '" . htmlspecialchars($form_title) . "' با موفقیت بروزرسانی شد.";
+                    header("Location: index.php");
                     exit;
-                } else { throw new Exception("ویرایش فرم اصلی ناموفق: " . $stmt_update_form->error); }
-            } catch (Exception $e) { $conn->rollback(); $errors['db_error'] = "خطای دیتابیس: " . $e->getMessage(); }
+                } catch (Exception $e) {
+                    $conn->rollback();
+                    $form_errors['db_error'] = "خطای پایگاه داده: " . $e->getMessage();
+                }
+            } else {
+                 $form_errors['db_error'] = 'خطا در اتصال به پایگاه داده.';
+            }
         }
+         // If errors, $form_fields_json_for_builder is already set to the submitted JSON from POST handling at the top
     }
-    $csrf_token_form_edit = regenerate_csrf_token('form_edit_action');
 }
 ?>
 
 <div class="page-header">
-    <h1>ویرایش فرم: <?php echo htmlspecialchars($input_form_name ?: ($form_data_for_form['FormName'] ?? '...')); ?></h1>
-    <div class="page-header-actions">
-        <a href="index.php" class="btn btn-secondary">
-             <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-            <span>بازگشت به لیست</span>
-        </a>
+    <h1>ویرایش فرم: <?php echo htmlspecialchars($form_title ?: 'فرم بدون عنوان'); ?></h1>
+     <div class="page-header-actions">
+        <a href="index.php" class="btn btn-secondary">بازگشت به لیست</a>
+        <a href="preview.php?form_id=<?php echo $form_id_to_edit; ?>" class="btn btn-outline-info" target="_blank">پیش‌نمایش فرم</a>
     </div>
 </div>
 
-<?php if (!empty($errors)): ?>
-    <div class="alert alert-danger">
-        <p><strong>خطا در ویرایش فرم:</strong></p>
-        <ul><?php foreach ($errors as $error_key => $error_msg):
-                 if (preg_match('/field_(\d+)_(name|type|options)/', $error_key, $matches)) {
-                    $field_num = (isset($matches[1]) ? ((int)$matches[1] + 1) : '');
-                    $part_map = ['name'=>'عنوان فیلد','type'=>'نوع فیلد','options'=>'گزینه‌های فیلد'];
-                    $part_name = isset($matches[2]) ? $part_map[$matches[2]] : 'فیلد';
-                    echo "<li>خطا در $part_name $field_num: " . htmlspecialchars($error_msg) . "</li>";
-                } else { echo "<li>" . htmlspecialchars($error_msg) . "</li>"; }
-            endforeach; ?></ul>
+<?php if (!empty($form_errors)): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <strong>خطا در بروزرسانی فرم:</strong>
+        <ul class="mb-0">
+            <?php foreach ($form_errors as $error_msg): ?>
+                <li><?php echo htmlspecialchars($error_msg); ?></li>
+            <?php endforeach; ?>
+        </ul>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
 <?php endif; ?>
 
-<?php if ($form_data_for_form || ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['form_id'])) ): // Show form if data loaded or it's a POST with form_id (even with load error, to show other errors) ?>
-<form action="edit.php?form_id=<?php echo $form_id_to_edit; ?>" method="POST" id="editFormBuilder">
-    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_form_edit; ?>">
-    <input type="hidden" name="form_id" value="<?php echo $form_id_to_edit; ?>">
+<form method="POST" action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]) . "?form_id=" . $form_id_to_edit; ?>" id="editFormBuilderForm">
+    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+    <input type="hidden" name="form_fields_json" id="form_fields_json_input_edit" value="<?php echo htmlspecialchars($form_fields_json_for_builder); ?>">
 
-    <div class="card">
-        <div class="card-header"><span class="card-title-text">۱. اطلاعات کلی فرم</span></div>
+    <div class="card mb-4">
+        <div class="card-header">اطلاعات کلی فرم</div>
         <div class="card-body">
-            <div class="form-group">
-                <label for="form_name">عنوان فرم <span class="text-danger">*</span></label>
-                <input type="text" class="form-control <?php echo isset($errors['form_name']) ? 'is-invalid' : ''; ?>" id="form_name" name="form_name" value="<?php echo htmlspecialchars($input_form_name); ?>" required>
-                <?php if (isset($errors['form_name'])): ?><div class="invalid-feedback"><?php echo $errors['form_name']; ?></div><?php endif; ?>
-            </div>
-            <div class="form-group">
-                <label for="form_description">توضیحات فرم</label>
-                <textarea class="form-control" id="form_description" name="form_description" rows="3"><?php echo htmlspecialchars($input_form_description); ?></textarea>
-            </div>
-            <div class="form-group">
-                <label for="department_id">بخش مرتبط (اختیاری)</label>
-                <select class="form-control <?php echo isset($errors['department_id']) ? 'is-invalid' : ''; ?>" id="department_id" name="department_id">
-                    <option value="">-- هیچکدام --</option>
-                    <?php foreach($available_departments as $dept): ?>
-                        <option value="<?php echo $dept['DepartmentID']; ?>" <?php echo ($input_department_id == $dept['DepartmentID']) ? 'selected' : ''; ?>>
-                            <?php echo htmlspecialchars($dept['DepartmentName']); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                 <?php if (isset($errors['department_id'])): ?><div class="invalid-feedback"><?php echo $errors['department_id']; ?></div><?php endif; ?>
-            </div>
-             <div class="form-group">
-                <label for="form_purpose">هدف/نوع فرم <span class="text-danger">*</span></label>
-                <select class="form-control <?php echo isset($errors['form_purpose']) ? 'is-invalid' : ''; ?>" id="form_purpose" name="form_purpose" required>
-                    <?php foreach ($form_purpose_options_display_edit as $fp_val => $fp_label): ?>
-                        <option value="<?php echo $fp_val; ?>" <?php echo ($input_form_purpose == $fp_val) ? 'selected' : ''; ?>>
-                            <?php echo $fp_label; ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <?php if (isset($errors['form_purpose'])): ?><div class="invalid-feedback"><?php echo $errors['form_purpose']; ?></div><?php endif; ?>
-            </div>
-        </div>
-    </div>
-
-    <div class="card mt-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <span class="card-title-text">۲. فیلدهای فرم</span>
-            <button type="button" id="addFieldBtnEdit" class="btn btn-sm btn-success">
-                 <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                <span>افزودن فیلد</span>
-            </button>
-        </div>
-        <div class="card-body">
-            <div id="formFieldsContainerEdit" class="mb-3">
-                <?php if (!empty($input_fields_repopulate)): ?>
-                    <?php foreach ($input_fields_repopulate as $index => $field_val): ?>
-                        <div class="form-field-item card mb-3">
-                             <div class="card-header py-2 field-header">
-                                <span class="field-number">فیلد #<?php echo $index + 1; ?></span>
-                                <button type="button" class="btn btn-sm btn-danger removeFieldBtn float-left" title="حذف این فیلد">
-                                     <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                                </button>
-                            </div>
-                            <div class="card-body p-3">
-                                <div class="row">
-                                    <div class="form-group col-md-5">
-                                        <label for="field_name_<?php echo $index; ?>">عنوان فیلد <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control <?php echo isset($errors["field_{$index}_name"]) ? 'is-invalid' : ''; ?>" id="field_name_<?php echo $index; ?>" name="fields[<?php echo $index; ?>][field_name]" value="<?php echo htmlspecialchars($field_val['field_name']); ?>" required>
-                                        <?php if (isset($errors["field_{$index}_name"])): ?><div class="invalid-feedback"><?php echo $errors["field_{$index}_name"]; ?></div><?php endif; ?>
-                                    </div>
-                                    <div class="form-group col-md-4">
-                                        <label for="field_type_<?php echo $index; ?>">نوع فیلد <span class="text-danger">*</span></label>
-                                        <select class="form-control field-type-select <?php echo isset($errors["field_{$index}_type"]) ? 'is-invalid' : ''; ?>" id="field_type_<?php echo $index; ?>" name="fields[<?php echo $index; ?>][field_type]" required data-index="<?php echo $index; ?>">
-                                            <option value="">انتخاب کنید...</option>
-                                            <?php foreach($field_type_options as $val_opt => $label_opt): ?>
-                                                <option value="<?php echo $val_opt; ?>" <?php echo ($field_val['field_type'] == $val_opt) ? 'selected' : ''; ?>><?php echo $label_opt; ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                        <?php if (isset($errors["field_{$index}_type"])): ?><div class="invalid-feedback"><?php echo $errors["field_{$index}_type"]; ?></div><?php endif; ?>
-                                    </div>
-                                     <div class="form-group col-md-3 align-self-end text-left">
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="checkbox" id="is_required_<?php echo $index; ?>" name="fields[<?php echo $index; ?>][is_required]" value="1" <?php echo !empty($field_val['is_required']) ? 'checked' : ''; ?>>
-                                            <label class="form-check-label" for="is_required_<?php echo $index; ?>">الزامی باشد</label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="form-group field-options-container mt-2" id="options_container_<?php echo $index; ?>" style="<?php echo in_array($field_val['field_type'], ['select', 'radio', 'checkbox']) ? '' : 'display:none;'; ?>">
-                                    <label for="field_options_<?php echo $index; ?>">گزینه‌ها (هر گزینه در یک خط جدید)</label>
-                                    <textarea class="form-control <?php echo isset($errors["field_{$index}_options"]) ? 'is-invalid' : ''; ?>" id="field_options_<?php echo $index; ?>" name="fields[<?php echo $index; ?>][field_options]" rows="3"><?php echo htmlspecialchars($field_val['field_options']); ?></textarea>
-                                     <?php if (isset($errors["field_{$index}_options"])): ?><div class="invalid-feedback"><?php echo $errors["field_{$index}_options"]; ?></div><?php endif; ?>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </div>
-             <?php if (isset($errors['fields_general'])): ?><div class="alert alert-warning mt-2"><?php echo $errors['fields_general']; ?></div><?php endif; ?>
-            <small class="form-text text-muted">فیلدها به ترتیبی که در اینجا قرار دارند، در فرم نهایی نمایش داده خواهند شد.</small>
-        </div>
-    </div>
-
-    <div class="form-actions mt-4">
-        <button type="submit" name="submit_edit_form" class="btn btn-primary btn-lg">
-            <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-            <span>ذخیره تغییرات فرم</span>
-        </button>
-        <a href="index.php" class="btn btn-outline-secondary btn-lg">انصراف</a>
-    </div>
-</form>
-<?php elseif(isset($errors['load_error'])): ?>
-    <div class="alert alert-danger"><?php echo htmlspecialchars($errors['load_error']); ?></div>
-<?php endif; ?>
-
-<div id="fieldTemplateEdit" style="display:none;">
-    <div class="form-field-item card mb-3">
-        <div class="card-header py-2 field-header">
-            <span class="field-number">فیلد #FIELD_DISPLAY_INDEX</span>
-            <button type="button" class="btn btn-sm btn-danger removeFieldBtn float-left" title="حذف این فیلد">
-                 <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-        </div>
-        <div class="card-body p-3">
             <div class="row">
-                <div class="form-group col-md-5">
-                    <label for="field_name_FIELD_INDEX_TPL">عنوان فیلد <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control" id="field_name_FIELD_INDEX_TPL" name="fields[FIELD_INDEX][field_name]" required>
+                <div class="col-md-8 mb-3">
+                    <label for="form_title_edit_input" class="form-label">عنوان فرم <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control <?php echo isset($form_errors['form_title']) ? 'is-invalid' : ''; ?>"
+                           id="form_title_edit_input" name="form_title" value="<?php echo htmlspecialchars($form_title); ?>" required>
+                    <?php if (isset($form_errors['form_title'])): ?><div class="invalid-feedback"><?php echo $form_errors['form_title']; ?></div><?php endif; ?>
                 </div>
-                <div class="form-group col-md-4">
-                    <label for="field_type_FIELD_INDEX_TPL">نوع فیلد <span class="text-danger">*</span></label>
-                    <select class="form-control field-type-select" id="field_type_FIELD_INDEX_TPL" name="fields[FIELD_INDEX][field_type]" required data-index="FIELD_INDEX">
-                        <option value="">انتخاب کنید...</option>
-                        <?php foreach($field_type_options as $val => $label): // Use the same options as above ?>
-                            <option value="<?php echo $val; ?>"><?php echo $label; ?></option>
-                        <?php endforeach; ?>
+                <div class="col-md-4 mb-3">
+                    <label for="form_status_edit_select" class="form-label">وضعیت فرم</label>
+                    <select class="form-select" id="form_status_edit_select" name="form_status">
+                        <option value="draft" <?php echo ($form_status === 'draft') ? 'selected' : ''; ?>>پیش‌نویس</option>
+                        <option value="published" <?php echo ($form_status === 'published') ? 'selected' : ''; ?>>منتشر شده</option>
+                        <option value="archived" <?php echo ($form_status === 'archived') ? 'selected' : ''; ?>>بایگانی شده</option>
                     </select>
                 </div>
-                 <div class="form-group col-md-3 align-self-end text-left">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="is_required_FIELD_INDEX_TPL" name="fields[FIELD_INDEX][is_required]" value="1">
-                        <label class="form-check-label" for="is_required_FIELD_INDEX_TPL">الزامی باشد</label>
-                    </div>
-                </div>
             </div>
-            <div class="form-group field-options-container mt-2" id="options_container_FIELD_INDEX_TPL" style="display:none;">
-                <label for="field_options_FIELD_INDEX_TPL">گزینه‌ها (هر گزینه در یک خط جدید)</label>
-                <textarea class="form-control" id="field_options_FIELD_INDEX_TPL" name="fields[FIELD_INDEX][field_options]" rows="3"></textarea>
+            <div class="mb-3">
+                <label for="form_description_edit_textarea" class="form-label">توضیحات فرم</label>
+                <textarea class="form-control" id="form_description_edit_textarea" name="form_description" rows="3"><?php echo htmlspecialchars($form_description); ?></textarea>
             </div>
         </div>
     </div>
-</div>
 
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">فیلدهای فرم</h5>
+            <div class="dropdown">
+                <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" id="addFieldDropdownButtonEdit" data-bs-toggle="dropdown" aria-expanded="false">
+                     <?php echo $field_types_config['add_new_field_icon'] ?? ''; ?>
+                    افزودن فیلد جدید
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="addFieldDropdownButtonEdit">
+                     <?php foreach ($field_types_config['types'] as $type_key => $type_info): ?>
+                        <li><a class="dropdown-item add-field-btn" href="#" data-field-type="<?php echo $type_key; ?>">
+                            <?php echo $type_info['icon'] . ' ' . htmlspecialchars($type_info['label']); ?>
+                        </a></li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        </div>
+        <div class="card-body">
+            <div id="form-fields-container-edit" class="mb-3">
+                <p class="text-muted text-center placeholder-text <?php echo !empty(json_decode($form_fields_json_for_builder, true)) ? 'd-none' : ''; ?>">
+                    این فرم در حال حاضر هیچ فیلدی ندارد یا فیلدها در حال بارگذاری هستند.
+                </p>
+            </div>
+            <div class="form-actions text-start border-top pt-3">
+                 <button type="submit" name="update_form_structure" class="btn btn-success">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-save-fill icon" viewBox="0 0 16 16"><path d="M8.5 1.5A1.5 1.5 0 0 1 10 0h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h2.5S.5 0 .5 1.5V4h1.572L5.7 7.596l1.376.786L8.5 9.118l1.428-.736.68-.346L12.5 6.43V1.5zM9.5 2H6v1.572l-2.5 2.904V14h10V6.376L9.5 2zM8 5.5a.5.5 0 0 0 0 1H5v-1h3z"/></svg>
+                    ذخیره تغییرات فرم
+                </button>
+            </div>
+        </div>
+    </div>
+</form>
+
+<?php echo get_form_field_templates_html(); ?>
+
+<script src="<?php echo get_base_url(); ?>assets/js/Sortable.min.js"></script>
+<script src="<?php echo get_base_url(); ?>assets/js/form_builder.js"></script>
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const container = document.getElementById('formFieldsContainerEdit');
-    const addFieldBtn = document.getElementById('addFieldBtnEdit');
-    const fieldTemplateHtmlSource = document.getElementById('fieldTemplateEdit').innerHTML;
-    let fieldIndexCounter = <?php echo count($input_fields_repopulate); ?>;
-
-    function updateFieldNumberingEdit() {
-        const fieldItems = container.querySelectorAll('.form-field-item');
-        fieldItems.forEach((item, idx) => {
-            const fieldNumberSpan = item.querySelector('.field-number');
-            if (fieldNumberSpan) fieldNumberSpan.textContent = 'فیلد #' + (idx + 1);
-        });
+document.addEventListener('DOMContentLoaded', function () {
+    const initialFieldsDataEdit = JSON.parse(document.getElementById('form_fields_json_input_edit').value || '[]');
+    if (typeof initializeFormBuilder === 'function') {
+        initializeFormBuilder(
+            'form-fields-container-edit',
+            'form_fields_json_input_edit',
+            initialFieldsDataEdit,
+            <?php echo json_encode($field_types_config); ?>
+        );
+    } else {
+        console.error('initializeFormBuilder function not found.');
     }
-    function addNewFieldEdit() {
-        const actualIndex = fieldIndexCounter++;
-        const displayIndex = container.children.length + 1;
-
-        let newFieldHtml = fieldTemplateHtmlSource;
-        newFieldHtml = newFieldHtml.replace(/FIELD_INDEX_TPL/g, actualIndex + '_tpl_id_edit');
-        newFieldHtml = newFieldHtml.replace(/FIELD_INDEX/g, actualIndex);
-        newFieldHtml = newFieldHtml.replace(/FIELD_DISPLAY_INDEX/g, displayIndex);
-
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = newFieldHtml;
-        const newFieldElement = tempDiv.firstElementChild;
-
-        newFieldElement.querySelectorAll('[id*="_tpl_id_edit"]').forEach(el => {
-            el.id = el.id.replace('_tpl_id_edit', '');
-        });
-         newFieldElement.querySelectorAll('[for*="_tpl_id_edit"]').forEach(el => {
-            el.htmlFor = el.htmlFor.replace('_tpl_id_edit', '');
-        });
-
-        container.appendChild(newFieldElement);
-        attachEventListenersToNewFieldEdit(newFieldElement, actualIndex);
-        updateFieldNumberingEdit();
-    }
-    function attachEventListenersToNewFieldEdit(fieldItem, currentItemIndex) {
-        const typeSelect = fieldItem.querySelector('.field-type-select');
-        const optionsContainer = fieldItem.querySelector('.field-options-container');
-        const removeBtn = fieldItem.querySelector('.removeFieldBtn');
-
-        if (typeSelect && optionsContainer) {
-            typeSelect.addEventListener('change', function() {
-                optionsContainer.style.display = ['select', 'radio', 'checkbox'].includes(this.value) ? 'block' : 'none';
-            });
-            if (typeSelect.value && ['select', 'radio', 'checkbox'].includes(typeSelect.value)) {
-                 optionsContainer.style.display = 'block';
-            }
-        }
-        if (removeBtn) {
-            removeBtn.addEventListener('click', function() {
-                fieldItem.remove();
-                updateFieldNumberingEdit();
-            });
-        }
-    }
-
-    if (addFieldBtn) { addFieldBtn.addEventListener('click', addNewFieldEdit); }
-    document.querySelectorAll('#formFieldsContainerEdit .form-field-item').forEach(function(item) {
-        let nameAttrInput = item.querySelector('[name*="[field_name]"]');
-        if (nameAttrInput && nameAttrInput.name) {
-            let match = nameAttrInput.name.match(/\[(\d+)\]/);
-            if (match && match[1]) {
-                 let dataIndexFromName = parseInt(match[1]);
-                 attachEventListenersToNewFieldEdit(item, dataIndexFromName);
-            }
-        }
-    });
-    updateFieldNumberingEdit();
 });
 </script>
 <style>
-    .field-header { background-color: #f8f9fc; }
-    .field-number { font-weight: bold; color: #5a5c69; }
-    .form-field-item .removeFieldBtn svg { vertical-align: middle; }
+    .form-field-item .card-header { background-color: #f8f9fa; padding: 0.5rem 0.75rem; }
+    .form-field-item .handle-sort { cursor: grab; }
+    .sortable-ghost { opacity: 0.4; background: #c8ebfb; border: 1px dashed #007bff; }
+    .sortable-chosen, .sortable-drag { opacity: 1 !important; background: #e9ecef; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    .field-property-sm { font-size: 0.8rem; margin-top: 0.2rem; }
+    .options-list-item { display: flex; align-items: center; margin-bottom: 0.3rem; }
+    .options-list-item input[type="text"] { flex-grow: 1; margin-right: 0.5rem; /* RTL */ }
 </style>
+
 <?php
 require_once __DIR__ . '/../includes/footer.php';
 ?>

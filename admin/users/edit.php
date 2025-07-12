@@ -1,313 +1,358 @@
 <?php
 require_once __DIR__ . '/../includes/header.php';
 
-if (empty($_SESSION['csrf_token_user_edit'])) {
-    $_SESSION['csrf_token_user_edit'] = bin2hex(random_bytes(32));
+$user_id_to_edit = isset($_GET['user_id']) ? (int)$_GET['user_id'] : 0;
+
+// Initialize variables
+$username_orig = ''; // To store original username for comparison and preventing edit of 'admin'
+$username_form = '';
+$first_name = '';
+$last_name = '';
+$email = '';
+$phone = '';
+$current_user_type = '';
+$role_ids = [];
+$is_active = false;
+$form_errors = [];
+$form_success_message = ''; // Not typically used with redirect, but good for non-redirect cases
+
+// CSRF token generation - make it unique per user being edited to avoid clashes if multiple edit tabs are open
+$csrf_token_name = 'edit_user_' . $user_id_to_edit;
+$csrf_token = generate_csrf_token($csrf_token_name);
+
+if ($user_id_to_edit <= 0 && $user_id_to_edit !== 0) { // UserID 0 might be the admin if we decide so
+    $_SESSION['user_action_error'] = 'شناسه کاربر نامعتبر است.';
+    header("Location: index.php");
+    exit;
 }
-$csrf_token = $_SESSION['csrf_token_user_edit'];
 
-$errors = [];
-$user_id_to_edit = null;
-$user_data_for_form = null;
-
-$user_type_options = [
-    'teacher' => 'مدرس',
-    'member' => 'عضو بخش',
-    'manager' => 'مدیر',
-    'deputy' => 'معاون',
-];
-
-$roles_query = $conn->query("SELECT RoleID, RoleName FROM Roles ORDER BY RoleName");
-$available_roles = [];
-if ($roles_query) {
-    while ($role = $roles_query->fetch_assoc()) {
-        $available_roles[] = $role;
-    }
-    $roles_query->close();
-}
-
-if (isset($_GET['user_id']) && is_numeric($_GET['user_id'])) {
-    $user_id_to_edit = (int)$_GET['user_id'];
-
-    if ($user_id_to_edit === ($_SESSION['admin_user_id'] ?? null)) {
-         header("Location: index.php?action_status=error&message=" . urlencode("امکان ویرایش مستقیم ادمین اصلی از این طریق وجود ندارد."));
-         exit;
-    }
-
-    $stmt_fetch_user = $conn->prepare("SELECT UserID, FirstName, LastName, Username, UserType, IsActive FROM Users WHERE UserID = ?");
+// Fetch user data for editing
+if ($conn) {
+    $stmt_fetch_user = $conn->prepare("SELECT UserID, Username, FirstName, LastName, Email, PhoneNumber, UserType, IsActive FROM Users WHERE UserID = ?");
     if ($stmt_fetch_user) {
         $stmt_fetch_user->bind_param("i", $user_id_to_edit);
         $stmt_fetch_user->execute();
         $result_user = $stmt_fetch_user->get_result();
-        if ($result_user->num_rows === 1) {
-            $user_data_for_form = $result_user->fetch_assoc();
-            $user_data_for_form['roles'] = [];
-            $stmt_user_roles = $conn->prepare("SELECT RoleID FROM UserRoles WHERE UserID = ?");
-            if ($stmt_user_roles) {
-                $stmt_user_roles->bind_param("i", $user_id_to_edit);
-                $stmt_user_roles->execute();
-                $result_user_roles = $stmt_user_roles->get_result();
-                while ($row = $result_user_roles->fetch_assoc()) {
-                    $user_data_for_form['roles'][] = $row['RoleID'];
+        if ($user_data = $result_user->fetch_assoc()) {
+            $user_id_to_edit = $user_data['UserID']; // Ensure we use the ID from DB
+            $username_orig = $user_data['Username'];
+            $username_form = $user_data['Username'];
+            $first_name = $user_data['FirstName'];
+            $last_name = $user_data['LastName'];
+            $email = $user_data['Email'];
+            $phone = $user_data['PhoneNumber'];
+            $current_user_type = $user_data['UserType'];
+            $is_active = (bool)$user_data['IsActive'];
+
+            if (strtolower($username_orig) !== 'admin') { // Don't fetch roles for main admin if they are not managed this way
+                $stmt_fetch_roles = $conn->prepare("SELECT RoleID FROM UserRoles WHERE UserID = ?");
+                if ($stmt_fetch_roles) {
+                    $stmt_fetch_roles->bind_param("i", $user_id_to_edit);
+                    $stmt_fetch_roles->execute();
+                    $result_roles = $stmt_fetch_roles->get_result();
+                    while ($row_role = $result_roles->fetch_assoc()) {
+                        $role_ids[] = $row_role['RoleID'];
+                    }
+                    $stmt_fetch_roles->close();
+                } else {
+                     $form_errors['db_error'] = 'خطا در بارگذاری نقش‌های کاربر: ' . $conn->error;
                 }
-                $stmt_user_roles->close();
             }
-        } else { $errors['load_error'] = "کاربر یافت نشد."; }
+        } else {
+            $_SESSION['user_action_error'] = 'کاربر با شناسه ' . htmlspecialchars($user_id_to_edit) . ' یافت نشد.';
+            header("Location: index.php");
+            exit;
+        }
         $stmt_fetch_user->close();
-    } else { $errors['load_error'] = "خطا بارگذاری: " . $conn->error; }
-} else { $errors['load_error'] = "شناسه کاربر نامعتبر."; }
-
-// Initialize input with current user data if available, otherwise use POST data or defaults
-$input_val = [
-    'firstname' => $_POST['firstname'] ?? ($user_data_for_form['FirstName'] ?? ''),
-    'lastname'  => $_POST['lastname']  ?? ($user_data_for_form['LastName'] ?? ''),
-    'username'  => $_POST['username']  ?? ($user_data_for_form['Username'] ?? ''),
-    'user_type' => $_POST['user_type'] ?? ($user_data_for_form['UserType'] ?? ''),
-    'is_active' => isset($_POST['is_active']) ? 1 : (isset($user_data_for_form['IsActive']) ? $user_data_for_form['IsActive'] : 0),
-    'roles'     => $_POST['roles'] ?? ($user_data_for_form['roles'] ?? [])
-];
-// If form was submitted and there were errors, $input_val will hold the submitted (but potentially invalid) values.
-// If it's the first load, $input_val will hold $user_data_for_form values.
-
-
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token_user_edit'], $_POST['csrf_token'])) {
-        $errors['csrf'] = 'خطای CSRF!';
-    } elseif (!$user_id_to_edit || !$user_data_for_form) {
-        $errors['form_error'] = 'خطا: اطلاعات کاربر برای ویرایش بارگذاری نشده.';
     } else {
-        // $input_val is already populated with POST data if available
+        $form_errors['db_error'] = 'خطا در آماده سازی کوئری بارگذاری کاربر: ' . $conn->error;
+    }
+} else {
+    $form_errors['db_error'] = 'خطا در اتصال به پایگاه داده.';
+}
+
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!isset($_POST['csrf_token']) || !verify_csrf_token($_POST['csrf_token'], $csrf_token_name)) {
+        $form_errors['csrf'] = 'خطای امنیتی CSRF. لطفاً صفحه را رفرش کرده و مجدداً تلاش کنید.';
+    } else {
+        $csrf_token = regenerate_csrf_token($csrf_token_name); // Regenerate after use
+
+        // Get new data from form, ensuring they are populated for display if errors occur
+        $username_form = sanitize_input($_POST['username'] ?? $username_orig); // Default to original if not set
         $password = $_POST['password'] ?? '';
         $password_confirm = $_POST['password_confirm'] ?? '';
+        $first_name = sanitize_input($_POST['first_name'] ?? $first_name);
+        $last_name = sanitize_input($_POST['last_name'] ?? $last_name);
+        $email = sanitize_input($_POST['email'] ?? $email);
+        $phone = sanitize_input($_POST['phone'] ?? $phone);
 
-        if (empty($input_val['firstname'])) $errors['firstname'] = 'نام الزامی است.';
-        if (empty($input_val['lastname'])) $errors['lastname'] = 'نام خانوادگی الزامی است.';
-
-        if (empty($input_val['username'])) {
-            $errors['username'] = 'نام کاربری الزامی است.';
-        } elseif (!preg_match('/^[a-zA-Z0-9_]{3,30}$/', $input_val['username'])) {
-            $errors['username'] = 'نام کاربری نامعتبر.';
+        if (strtolower($username_orig) !== 'admin') {
+            $role_ids = isset($_POST['role_ids']) && is_array($_POST['role_ids']) ? array_map('intval', $_POST['role_ids']) : [];
+            $is_active = isset($_POST['is_active']) ? 1 : 0;
         } else {
+            // For admin, roles are not changed here, and admin is always active.
+            // $role_ids remain as fetched (empty for admin, or could be a special 'admin' role ID if designed that way)
+            $is_active = 1; // Main admin must be active
+        }
+
+
+        // Validation
+        if (strtolower($username_orig) !== 'admin' && empty($username_form)) { // Username can't be empty for non-admins
+            $form_errors['username'] = 'نام کاربری نمی‌تواند خالی باشد.';
+        } elseif (strtolower($username_orig) !== 'admin' && strlen($username_form) < 3) {
+            $form_errors['username'] = 'نام کاربری باید حداقل ۳ کاراکتر باشد.';
+        } elseif (strtolower($username_orig) !== 'admin' && strtolower($username_form) === 'admin') {
+             $form_errors['username'] = 'نام کاربری "admin" برای کاربران عادی مجاز نیست.';
+        } elseif ($username_form !== $username_orig && strtolower($username_orig) !== 'admin') {
             $stmt_check_username = $conn->prepare("SELECT UserID FROM Users WHERE Username = ? AND UserID != ?");
             if ($stmt_check_username) {
-                $stmt_check_username->bind_param("si", $input_val['username'], $user_id_to_edit);
+                $stmt_check_username->bind_param("si", $username_form, $user_id_to_edit);
                 $stmt_check_username->execute();
-                if ($stmt_check_username->get_result()->num_rows > 0) $errors['username'] = 'این نام کاربری توسط کاربر دیگری استفاده شده.';
+                if ($stmt_check_username->get_result()->num_rows > 0) {
+                    $form_errors['username'] = 'این نام کاربری قبلاً توسط کاربر دیگری استفاده شده است.';
+                }
                 $stmt_check_username->close();
-            } else { $errors['db_error'] = "خطا بررسی نام کاربری: " . $conn->error; }
+            }
+        } elseif (strtolower($username_orig) === 'admin' && $username_form !== $username_orig) {
+            // This case should not happen if input is readonly, but as a safeguard:
+            $form_errors['username'] = 'نام کاربری ادمین اصلی قابل تغییر نیست.';
+            $username_form = $username_orig; // Reset to original
         }
+
 
         if (!empty($password)) {
-            if (strlen($password) < 6) $errors['password'] = 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد.';
-            if ($password !== $password_confirm) $errors['password_confirm'] = 'تکرار رمز عبور جدید مطابقت ندارد.';
+            if (strlen($password) < 6) {
+                $form_errors['password'] = 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد.';
+            } elseif ($password !== $password_confirm) {
+                $form_errors['password_confirm'] = 'تکرار رمز عبور جدید مطابقت ندارد.';
+            }
         }
 
-        if (empty($input_val['user_type'])) $errors['user_type'] = 'نوع کاربر الزامی است.';
-        elseif (!array_key_exists($input_val['user_type'], $user_type_options)) $errors['user_type'] = 'نوع کاربر نامعتبر.';
+        if (empty($first_name)) $form_errors['first_name'] = 'نام نمی‌تواند خالی باشد.';
+        if (empty($last_name)) $form_errors['last_name'] = 'نام خانوادگی نمی‌تواند خالی باشد.';
 
-        foreach($input_val['roles'] as $selected_role_id) {
-            $role_is_valid = false;
-            foreach($available_roles as $ar) if($ar['RoleID'] == $selected_role_id) $role_is_valid = true;
-            if(!$role_is_valid) { $errors['roles'] = "نقش نامعتبر."; break; }
+        if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $form_errors['email'] = 'فرمت ایمیل نامعتبر است.';
+        } elseif (!empty($email) && $email !== $user_data['Email']) { // Check only if email is changed
+             // Optional: Check if new email already exists for another user
         }
 
-        if (empty($errors)) {
+        if (strtolower($username_orig) !== 'admin' && empty($role_ids)) {
+             $form_errors['role_ids'] = 'حداقل یک نقش باید برای کاربر انتخاب شود.';
+        }
+
+        if (empty($form_errors)) {
             $conn->begin_transaction();
             try {
-                $sql_update_user = "UPDATE Users SET FirstName = ?, LastName = ?, Username = ?, UserType = ?, IsActive = ?, UpdatedAt = NOW()";
-                $types_update = "ssssi"; // For FName, LName, UName, UserType, IsActive
-                $params_update = [$input_val['firstname'], $input_val['lastname'], $input_val['username'], $input_val['user_type'], $input_val['is_active']];
+                $update_fields_sql_parts = [];
+                $bind_types_update = "";
+                $bind_values_update = [];
+
+                // Only add fields to update if they have changed and are valid to change
+                if (strtolower($username_orig) !== 'admin' && $username_form !== $username_orig) {
+                    $update_fields_sql_parts[] = "Username = ?"; $bind_types_update .= "s"; $bind_values_update[] = $username_form;
+                }
+                if ($first_name !== $user_data['FirstName']) { $update_fields_sql_parts[] = "FirstName = ?"; $bind_types_update .= "s"; $bind_values_update[] = $first_name; }
+                if ($last_name !== $user_data['LastName']) { $update_fields_sql_parts[] = "LastName = ?"; $bind_types_update .= "s"; $bind_values_update[] = $last_name; }
+                if ($email !== $user_data['Email']) { $update_fields_sql_parts[] = "Email = ?"; $bind_types_update .= "s"; $bind_values_update[] = $email; }
+                if ($phone !== $user_data['PhoneNumber']) { $update_fields_sql_parts[] = "PhoneNumber = ?"; $bind_types_update .= "s"; $bind_values_update[] = $phone; }
+
+                if (strtolower($username_orig) !== 'admin') { // IsActive only for non-admins from this form
+                    if ($is_active !== (bool)$user_data['IsActive']) {
+                        $update_fields_sql_parts[] = "IsActive = ?"; $bind_types_update .= "i"; $bind_values_update[] = $is_active;
+                    }
+                }
 
                 if (!empty($password)) {
                     $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                    $sql_update_user .= ", Password = ?";
-                    $types_update .= "s";
-                    $params_update[] = $hashed_password;
+                    $update_fields_sql_parts[] = "Password = ?"; $bind_types_update .= "s"; $bind_values_update[] = $hashed_password;
                 }
-                $sql_update_user .= " WHERE UserID = ?";
-                $types_update .= "i";
-                $params_update[] = $user_id_to_edit;
 
-                $stmt_update_user = $conn->prepare($sql_update_user);
-                if(!$stmt_update_user) throw new Exception("آماده سازی آپدیت کاربر ناموفق: " . $conn->error);
-                $stmt_update_user->bind_param($types_update, ...$params_update);
+                if (!empty($update_fields_sql_parts)) {
+                    $sql_update_user = "UPDATE Users SET " . implode(", ", $update_fields_sql_parts) . " WHERE UserID = ?";
+                    $bind_types_update .= "i";
+                    $bind_values_update[] = $user_id_to_edit;
 
-                if ($stmt_update_user->execute()) {
+                    $stmt_update_user = $conn->prepare($sql_update_user);
+                    if (!$stmt_update_user) throw new Exception("خطا در آماده سازی کوئری بروزرسانی کاربر: " . $conn->error);
+
+                    $stmt_update_user->bind_param($bind_types_update, ...$bind_values_update);
+                    if (!$stmt_update_user->execute()) throw new Exception("خطا در بروزرسانی کاربر: " . $stmt_update_user->error . " SQL: " . $sql_update_user);
                     $stmt_update_user->close();
+                }
 
+                // Update roles (only if not the 'admin' user)
+                if (strtolower($username_orig) !== 'admin') {
                     $stmt_delete_roles = $conn->prepare("DELETE FROM UserRoles WHERE UserID = ?");
-                    if(!$stmt_delete_roles) throw new Exception("آماده سازی حذف نقش قبلی ناموفق: " . $conn->error);
+                    if (!$stmt_delete_roles) throw new Exception("خطا در آماده سازی حذف نقش‌های قدیمی: " . $conn->error);
                     $stmt_delete_roles->bind_param("i", $user_id_to_edit);
-                    if(!$stmt_delete_roles->execute()) throw new Exception("حذف نقش قبلی ناموفق: " . $stmt_delete_roles->error);
+                    if (!$stmt_delete_roles->execute()) throw new Exception("خطا در حذف نقش‌های قدیمی: " . $stmt_delete_roles->error);
                     $stmt_delete_roles->close();
 
-                    if (!empty($input_val['roles'])) {
+                    if (!empty($role_ids)) {
                         $stmt_assign_role = $conn->prepare("INSERT INTO UserRoles (UserID, RoleID) VALUES (?, ?)");
-                        if(!$stmt_assign_role) throw new Exception("آماده سازی تخصیص نقش جدید ناموفق: " . $conn->error);
-                        foreach ($input_val['roles'] as $role_id) {
-                            $stmt_assign_role->bind_param("ii", $user_id_to_edit, $role_id);
-                             if(!$stmt_assign_role->execute()) throw new Exception("تخصیص نقش جدید ناموفق: " . $stmt_assign_role->error);
+                        if (!$stmt_assign_role) throw new Exception("خطا در آماده سازی تخصیص نقش جدید: " . $conn->error);
+                        foreach ($role_ids as $role_id_new) {
+                            $stmt_assign_role->bind_param("ii", $user_id_to_edit, $role_id_new);
+                            if (!$stmt_assign_role->execute()) throw new Exception("خطا در تخصیص نقش جدید $role_id_new: " . $stmt_assign_role->error);
                         }
                         $stmt_assign_role->close();
                     }
-                    $conn->commit();
-                    $_SESSION['csrf_token_user_edit'] = bin2hex(random_bytes(32));
-                    header("Location: index.php?action_status=success_edit&message=" . urlencode("اطلاعات کاربر با موفقیت ویرایش شد."));
-                    exit;
-                } else { throw new Exception("ویرایش اطلاعات کاربر ناموفق: " . $stmt_update_user->error); }
-            } catch (Exception $e) { $conn->rollback(); $errors['db_error'] = $e->getMessage(); }
+                }
+
+                $conn->commit();
+                $_SESSION['user_action_success'] = "اطلاعات کاربر '" . htmlspecialchars($username_form) . "' با موفقیت بروزرسانی شد.";
+
+                header("Location: index.php");
+                exit;
+
+            } catch (Exception $e) {
+                $conn->rollback();
+                $form_errors['db_error'] = "خطای پایگاه داده: " . $e->getMessage();
+            }
         }
+        // Note: If there were errors, $username_form, $first_name etc. are already set to the submitted values for redisplay.
+        // $role_ids and $is_active are also set based on POST for redisplay.
     }
-    $_SESSION['csrf_token_user_edit'] = bin2hex(random_bytes(32)); $csrf_token = $_SESSION['csrf_token_user_edit'];
 }
 ?>
 
 <div class="page-header">
-    <h1>ویرایش کاربر: <?php echo htmlspecialchars(($user_data_for_form['FirstName'] ?? '') . ' ' . ($user_data_for_form['LastName'] ?? '')); ?></h1>
+    <h1>ویرایش کاربر: <?php echo htmlspecialchars($username_orig); // Show original username in title ?></h1>
     <div class="page-header-actions">
         <a href="index.php" class="btn btn-secondary">
-            <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-            بازگشت به لیست
+             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-right-circle icon" viewBox="0 0 16 16">
+                <path fill-rule="evenodd" d="M1 8a7 7 0 1 0 14 0A7 7 0 0 0 1 8zm15 0A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-4.5-.5a.5.5 0 0 0 0 1h5.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 1 0-.708.708L11.293 7.5H6.5a.5.5 0 0 0 0 1h4.793z"/>
+            </svg>
+            بازگشت به لیست کاربران
         </a>
     </div>
 </div>
 
-<?php if (!empty($errors['load_error'])): ?> <div class="alert alert-danger"><?php echo htmlspecialchars($errors['load_error']); ?></div>
-<?php elseif (!empty($errors['db_error'])): ?> <div class="alert alert-danger"><?php echo htmlspecialchars($errors['db_error']); ?></div>
+<?php if (!empty($form_errors['csrf'])): ?>
+    <div class="alert alert-danger"><?php echo $form_errors['csrf']; ?></div>
 <?php endif; ?>
-<?php if (!empty($errors['csrf'])): ?> <div class="alert alert-danger"><?php echo htmlspecialchars($errors['csrf']); ?></div>
-<?php endif; ?>
-<?php if (count(array_diff_key($errors, array_flip(['load_error', 'db_error', 'csrf']))) > 0 && $_SERVER["REQUEST_METHOD"] == "POST"): ?>
-    <div class="alert alert-danger">لطفاً خطاهای فرم را بررسی و اصلاح کنید.</div>
+<?php if (!empty($form_errors['db_error'])): ?>
+    <div class="alert alert-danger"><?php echo $form_errors['db_error']; ?></div>
 <?php endif; ?>
 
-
-<?php if ($user_data_for_form): ?>
 <div class="card">
     <div class="card-body">
-        <form action="edit.php?user_id=<?php echo $user_id_to_edit; ?>" method="POST" class="form-container needs-validation" novalidate>
+        <form method="POST" action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]) . "?user_id=" . $user_id_to_edit; ?>" class="form-container needs-validation" novalidate>
             <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-            <input type="hidden" name="user_id" value="<?php echo $user_id_to_edit; ?>">
 
-            <div class="form-row">
-                <div class="form-group col-md-6">
-                    <label for="firstname">نام <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control <?php echo isset($errors['firstname']) ? 'is-invalid' : ''; ?>" id="firstname" name="firstname" value="<?php echo htmlspecialchars($input_val['firstname']); ?>" required>
-                    <?php if (isset($errors['firstname'])): ?><div class="invalid-feedback"><?php echo $errors['firstname']; ?></div><?php endif; ?>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label for="username">نام کاربری <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control <?php echo isset($form_errors['username']) ? 'is-invalid' : ''; ?>"
+                               id="username" name="username" value="<?php echo htmlspecialchars($username_form); ?>" required
+                               <?php echo (strtolower($username_orig) === 'admin') ? 'readonly' : ''; ?>>
+                        <?php if (isset($form_errors['username'])): ?><div class="invalid-feedback"><?php echo $form_errors['username']; ?></div><?php endif; ?>
+                         <?php if (strtolower($username_orig) === 'admin'): ?><small class="form-text text-muted">نام کاربری ادمین اصلی قابل تغییر نیست.</small><?php endif; ?>
+                    </div>
                 </div>
-                <div class="form-group col-md-6">
-                    <label for="lastname">نام خانوادگی <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control <?php echo isset($errors['lastname']) ? 'is-invalid' : ''; ?>" id="lastname" name="lastname" value="<?php echo htmlspecialchars($input_val['lastname']); ?>" required>
-                    <?php if (isset($errors['lastname'])): ?><div class="invalid-feedback"><?php echo $errors['lastname']; ?></div><?php endif; ?>
+                 <div class="col-md-6">
+                    <div class="form-group">
+                        <label for="email">ایمیل</label>
+                        <input type="email" class="form-control <?php echo isset($form_errors['email']) ? 'is-invalid' : ''; ?>" id="email" name="email" value="<?php echo htmlspecialchars($email); ?>">
+                        <?php if (isset($form_errors['email'])): ?><div class="invalid-feedback"><?php echo $form_errors['email']; ?></div><?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label for="password">رمز عبور جدید</label>
+                        <input type="password" class="form-control <?php echo isset($form_errors['password']) ? 'is-invalid' : ''; ?>" id="password" name="password" placeholder="برای عدم تغییر، خالی بگذارید">
+                        <?php if (isset($form_errors['password'])): ?><div class="invalid-feedback"><?php echo $form_errors['password']; ?></div><?php endif; ?>
+                        <small class="form-text text-muted">حداقل ۶ کاراکتر در صورت تغییر.</small>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label for="password_confirm">تکرار رمز عبور جدید</label>
+                        <input type="password" class="form-control <?php echo isset($form_errors['password_confirm']) ? 'is-invalid' : ''; ?>" id="password_confirm" name="password_confirm">
+                        <?php if (isset($form_errors['password_confirm'])): ?><div class="invalid-feedback"><?php echo $form_errors['password_confirm']; ?></div><?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label for="first_name">نام <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control <?php echo isset($form_errors['first_name']) ? 'is-invalid' : ''; ?>" id="first_name" name="first_name" value="<?php echo htmlspecialchars($first_name); ?>" required>
+                        <?php if (isset($form_errors['first_name'])): ?><div class="invalid-feedback"><?php echo $form_errors['first_name']; ?></div><?php endif; ?>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label for="last_name">نام خانوادگی <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control <?php echo isset($form_errors['last_name']) ? 'is-invalid' : ''; ?>" id="last_name" name="last_name" value="<?php echo htmlspecialchars($last_name); ?>" required>
+                        <?php if (isset($form_errors['last_name'])): ?><div class="invalid-feedback"><?php echo $form_errors['last_name']; ?></div><?php endif; ?>
+                    </div>
                 </div>
             </div>
 
             <div class="form-group">
-                <label for="username">نام کاربری <span class="text-danger">*</span></label>
-                <input type="text" class="form-control <?php echo isset($errors['username']) ? 'is-invalid' : ''; ?>" id="username" name="username" value="<?php echo htmlspecialchars($input_val['username']); ?>" required pattern="^[a-zA-Z0-9_]{3,30}$" aria-describedby="usernameHelp">
-                <small id="usernameHelp" class="form-text text-muted">حروف انگلیسی، اعداد و زیرخط (_)، حداقل ۳ کاراکتر.</small>
-                <?php if (isset($errors['username'])): ?><div class="invalid-feedback"><?php echo $errors['username']; ?></div><?php endif; ?>
+                <label for="phone">شماره تلفن</label>
+                <input type="text" class="form-control <?php echo isset($form_errors['phone']) ? 'is-invalid' : ''; ?>" id="phone" name="phone" value="<?php echo htmlspecialchars($phone); ?>" dir="ltr" placeholder="اختیاری">
+                <?php if (isset($form_errors['phone'])): ?><div class="invalid-feedback"><?php echo $form_errors['phone']; ?></div><?php endif; ?>
             </div>
 
+            <?php if (strtolower($username_orig) !== 'admin'): ?>
             <div class="form-group">
-                <label for="password">رمز عبور جدید (اختیاری)</label>
-                <input type="password" class="form-control <?php echo isset($errors['password']) ? 'is-invalid' : ''; ?>" id="password" name="password" minlength="6" aria-describedby="passwordHelpEdit">
-                <small id="passwordHelpEdit" class="form-text text-muted">برای تغییر رمز عبور، مقدار جدید را وارد کنید. در غیر این صورت، خالی بگذارید.</small>
-                <?php if (isset($errors['password'])): ?><div class="invalid-feedback"><?php echo $errors['password']; ?></div><?php endif; ?>
-            </div>
-            <div class="form-group">
-                <label for="password_confirm">تکرار رمز عبور جدید</label>
-                <input type="password" class="form-control <?php echo isset($errors['password_confirm']) ? 'is-invalid' : ''; ?>" id="password_confirm" name="password_confirm">
-                <?php if (isset($errors['password_confirm'])): ?><div class="invalid-feedback"><?php echo $errors['password_confirm']; ?></div><?php endif; ?>
-            </div>
-             <div id="password-strength-edit" class="password-strength mb-3"><span></span></div>
-
-
-            <div class="form-group">
-                <label for="user_type">نوع کاربر <span class="text-danger">*</span></label>
-                <select class="form-control <?php echo isset($errors['user_type']) ? 'is-invalid' : ''; ?>" id="user_type" name="user_type" required>
-                    <option value="">انتخاب کنید...</option>
-                    <?php foreach ($user_type_options as $value => $label): ?>
-                        <option value="<?php echo $value; ?>" <?php echo ($input_val['user_type'] == $value) ? 'selected' : ''; ?>><?php echo $label; ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <?php if (isset($errors['user_type'])): ?><div class="invalid-feedback"><?php echo $errors['user_type']; ?></div><?php endif; ?>
-            </div>
-
-            <div class="form-group">
-                <label>نقش‌ها</label>
-                <div class="form-check-group p-2 border rounded">
-                    <?php if (!empty($available_roles)): ?>
-                        <?php foreach ($available_roles as $role): ?>
-                            <div class="form-check form-check-inline">
-                                <input class="form-check-input" type="checkbox" name="roles[]" id="role_edit_<?php echo $role['RoleID']; ?>" value="<?php echo $role['RoleID']; ?>" <?php echo in_array($role['RoleID'], $input_val['roles']) ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="role_edit_<?php echo $role['RoleID']; ?>"><?php echo htmlspecialchars($role['RoleName']); ?></label>
-                            </div>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <p class="text-muted mb-0">هیچ نقشی تعریف نشده است.</p>
-                    <?php endif; ?>
+                <label>نقش(ها) <span class="text-danger">*</span></label>
+                <div class="form-check-group <?php echo isset($form_errors['role_ids']) ? 'is-invalid' : ''; ?>">
+                <?php
+                if ($conn) {
+                    $available_roles_query = "SELECT RoleID, RoleName, Description FROM Roles WHERE RoleName != 'admin' ORDER BY RoleName";
+                    $roles_result = $conn->query($available_roles_query);
+                    if ($roles_result && $roles_result->num_rows > 0) {
+                        while ($role = $roles_result->fetch_assoc()) {
+                            $checked = is_array($role_ids) && in_array($role['RoleID'], $role_ids) ? 'checked' : '';
+                            echo '<div class="form-check form-check-inline">';
+                            echo '<input class="form-check-input" type="checkbox" name="role_ids[]" id="role_' . $role['RoleID'] . '" value="' . $role['RoleID'] . '" ' . $checked . '>';
+                            echo '<label class="form-check-label" for="role_' . $role['RoleID'] . '">' . htmlspecialchars($role['RoleName']) . (!empty($role['Description']) ? ' <small class="text-muted">('.htmlspecialchars($role['Description']).')</small>' : '') . '</label>';
+                            echo '</div>';
+                        }
+                    } else {
+                        echo '<p class="text-muted">هیچ نقشی (به جز ادمین اصلی) برای تخصیص تعریف نشده است.</p>';
+                         if(empty($form_errors['role_ids'])) $form_errors['role_ids'] = "هیچ نقشی برای تخصیص وجود ندارد. ابتدا نقش ایجاد کنید.";
+                    }
+                } else {
+                    echo '<p class="text-danger">خطا در بارگذاری نقش‌ها.</p>';
+                     if(empty($form_errors['role_ids'])) $form_errors['role_ids'] = "خطا در بارگذاری نقش‌ها.";
+                }
+                ?>
                 </div>
-                 <?php if (isset($errors['roles'])): ?><div class="text-danger small mt-1"><?php echo $errors['roles']; ?></div><?php endif; ?>
+                 <?php if (isset($form_errors['role_ids'])): ?><div class="invalid-feedback d-block"><?php echo $form_errors['role_ids']; ?></div><?php endif; ?>
             </div>
 
             <div class="form-group">
                 <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="is_active" name="is_active" value="1" <?php echo $input_val['is_active'] ? 'checked' : ''; ?>>
+                    <input class="form-check-input" type="checkbox" id="is_active" name="is_active" value="1" <?php echo $is_active ? 'checked' : ''; ?>>
                     <label class="form-check-label" for="is_active">
                         کاربر فعال باشد
                     </label>
                 </div>
             </div>
+            <?php else: ?>
+                <input type="hidden" name="is_active" value="1">
+                 <div class="alert alert-info mt-3">نقش‌ها و وضعیت فعالیت ادمین اصلی از این بخش قابل تغییر نیست.</div>
+            <?php endif; ?>
+
 
             <div class="form-actions">
-                <button type="submit" class="btn btn-primary">
-                     <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                    <span>ذخیره تغییرات</span>
-                </button>
-                <a href="index.php" class="btn btn-outline-secondary">انصراف</a>
+                <button type="submit" class="btn btn-primary">ذخیره تغییرات</button>
+                <a href="index.php" class="btn btn-secondary">انصراف</a>
             </div>
         </form>
     </div>
 </div>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const passwordInputEdit = document.getElementById('password');
-    const strengthBarContainerEdit = document.getElementById('password-strength-edit');
-    if (passwordInputEdit && strengthBarContainerEdit) {
-        const strengthSpanEdit = strengthBarContainerEdit.querySelector('span');
-        passwordInputEdit.addEventListener('input', function() {
-            const val = passwordInputEdit.value;
-            let strengthScore = 0;
-            let strengthClass = '';
-
-            if (val.length === 0) {
-                 strengthSpanEdit.style.width = '0%';
-                 strengthBarContainerEdit.className = 'password-strength mb-3';
-                 return;
-            }
-            if (val.length >= 6) strengthScore++;
-            if (val.length >= 8) strengthScore++;
-            if (val.match(/[a-z]/) && val.match(/[A-Z]/)) strengthScore++;
-            if (val.match(/\d/)) strengthScore++;
-            if (val.match(/[^a-zA-Z\d]/)) strengthScore++;
-
-            if (strengthScore <= 2) strengthClass = 'weak';
-            else if (strengthScore <= 4) strengthClass = 'medium';
-            else strengthClass = 'strong';
-
-            strengthBarContainerEdit.className = 'password-strength mb-3 ' + strengthClass;
-            strengthSpanEdit.style.width = (strengthScore / 5 * 100) + '%';
-        });
-    }
-});
-</script>
-<?php else: ?>
-    <?php if (empty($errors['load_error'])): ?>
-        <div class="alert alert-warning">اطلاعات کاربر برای ویرایش در دسترس نیست یا شناسه کاربر نامعتبر است.</div>
-    <?php endif; ?>
-<?php endif; ?>
-
 
 <?php
 require_once __DIR__ . '/../includes/footer.php';

@@ -1,179 +1,305 @@
 <?php
-// admin/classes/edit.php
-require_once __DIR__ . '/../includes/header.php'; // Handles session, db, auth
+require_once __DIR__ . '/../includes/header.php';
 
-$csrf_token_class_edit = generate_csrf_token('class_edit_form');
-$errors_cls_edit = [];
-$class_id_to_edit = null;
-$class_data_for_form = null; // Holds data fetched from DB for the class being edited
+$class_id_to_edit = isset($_GET['class_id']) ? (int)$_GET['class_id'] : 0;
 
-// Fetch active teachers for dropdown
-$teachers_cls_q_edit = $conn->query("SELECT UserID, FirstName, LastName, Username FROM Users WHERE UserType = 'teacher' AND IsActive = TRUE ORDER BY LastName, FirstName");
-$available_teachers_cls_edit = [];
-if ($teachers_cls_q_edit) { while($tc_e = $teachers_cls_q_edit->fetch_assoc()) $available_teachers_cls_edit[] = $tc_e; $teachers_cls_q_edit->close(); }
+$class_name = '';
+$grade_level = '';
+$academic_year = '';
+$description = '';
+$teacher_ids_selected = []; // Holds IDs of teachers selected in the form on POST or fetched from DB
+$original_class_name = '';    // To display in title and for uniqueness check if name changes
+$original_academic_year = ''; // For uniqueness check if year changes
+$form_errors = [];
 
-$grade_level_options_edit = ['اول دبستان', 'دوم دبستان', 'سوم دبستان', 'چهارم دبستان', 'پنجم دبستان', 'ششم دبستان', 'متوسطه اول - هفتم', 'متوسطه اول - هشتم', 'متوسطه اول - نهم', 'متوسطه دوم - دهم', 'متوسطه دوم - یازدهم', 'متوسطه دوم - دوازدهم', 'پیش‌دبستانی', 'سطح ۱ (عمومی)', 'سطح ۲ (عمومی)', 'سطح ۳ (عمومی)', 'بزرگسالان', 'والدین'];
-
-// Attempt to load class data if class_id is provided in GET
-if (isset($_GET['class_id']) && is_numeric($_GET['class_id'])) {
-    $class_id_to_edit = (int)$_GET['class_id'];
-    $stmt_fetch_cls = $conn->prepare("SELECT ClassID, ClassName, TeacherUserID, GradeLevel, AcademicYear, Description, IsActive FROM Classes WHERE ClassID = ?");
-    if ($stmt_fetch_cls) {
-        $stmt_fetch_cls->bind_param("i", $class_id_to_edit);
-        $stmt_fetch_cls->execute();
-        $result_cls = $stmt_fetch_cls->get_result();
-        if ($result_cls->num_rows === 1) {
-            $class_data_for_form = $result_cls->fetch_assoc();
-        } else { $errors_cls_edit['load'] = "کلاس مورد نظر برای ویرایش یافت نشد."; }
-        $stmt_fetch_cls->close();
-    } else { $errors_cls_edit['load'] = "خطا در بارگذاری اطلاعات کلاس: " . $conn->error; }
-} elseif (!isset($_POST['class_id_hidden'])) { // If not POST and no class_id in GET
-     $errors_cls_edit['load'] = "شناسه کلاس برای ویرایش نامعتبر یا مشخص نشده است.";
+if ($class_id_to_edit <= 0) {
+    $_SESSION['action_error'] = 'شناسه کلاس نامعتبر است.';
+    header("Location: index.php");
+    exit;
 }
 
+$csrf_token_name = 'edit_class_' . $class_id_to_edit;
+$csrf_token = generate_csrf_token($csrf_token_name);
 
-// Initialize input_cls_edit:
-// 1. If POST, use POST data (sticky form).
-// 2. Else if $class_data_for_form is loaded (from GET), use that.
-// 3. Else, empty/defaults.
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $class_id_to_edit = isset($_POST['class_id_hidden']) ? (int)$_POST['class_id_hidden'] : $class_id_to_edit; // Ensure class_id is maintained
-    $input_cls_edit = [
-        'class_name'    => sanitize_input($_POST['class_name'] ?? ''),
-        'teacher_id'    => !empty($_POST['teacher_id']) ? (int)$_POST['teacher_id'] : null,
-        'grade_level'   => sanitize_input($_POST['grade_level'] ?? ''),
-        'academic_year' => sanitize_input($_POST['academic_year'] ?? ''),
-        'description'   => sanitize_input($_POST['description_cls_edit'] ?? ''),
-        'is_active'     => isset($_POST['is_active_cls_edit']) ? 1 : 0
-    ];
-} elseif ($class_data_for_form) {
-    $input_cls_edit = [
-        'class_name'    => $class_data_for_form['ClassName'],
-        'teacher_id'    => $class_data_for_form['TeacherUserID'],
-        'grade_level'   => $class_data_for_form['GradeLevel'],
-        'academic_year' => $class_data_for_form['AcademicYear'],
-        'description'   => $class_data_for_form['Description'],
-        'is_active'     => $class_data_for_form['IsActive']
-    ];
-} else { // Fallback if no data could be loaded or posted (e.g. direct access with invalid/no ID and not POST)
-    $input_cls_edit = ['class_name' => '', 'teacher_id' => '', 'grade_level' => '', 'academic_year' => '', 'description' => '', 'is_active' => 1];
+// Populate academic years dropdown
+$current_gregorian_year_e = date('Y');
+$current_jalali_year_parts_e = explode('/', to_jalali($current_gregorian_year_e.'-03-21', 'yyyy/MM/dd'));
+$current_jalali_year_numeric_e = isset($current_jalali_year_parts_e[0]) ? (int)$current_jalali_year_parts_e[0] : (((int)date('Y')) - 622);
+$academic_years_dropdown_edit = [];
+// Generate a range of academic years, e.g., 5 years past to 2 years future from current Jalali year
+for ($i = $current_jalali_year_numeric_e - 5; $i <= $current_jalali_year_numeric_e + 2; $i++) {
+    $academic_years_dropdown_edit[] = $i . '-' . ($i + 1);
 }
 
-
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit_edit_class'])) {
-    if (!$class_id_to_edit) { // This check is crucial if class_id wasn't in GET and not in POST hidden
-        $errors_cls_edit['form'] = "خطا: شناسه کلاس برای ویرایش در دسترس نیست.";
-    } elseif (!verify_csrf_token($_POST['csrf_token'] ?? '', 'class_edit_form')) {
-        $errors_cls_edit['csrf'] = 'خطای CSRF! درخواست نامعتبر یا توکن منقضی شده.';
-    } else {
-        // Validation logic (using $input_cls_edit which is already populated from POST)
-        if (empty($input_cls_edit['class_name'])) $errors_cls_edit['class_name'] = "نام کلاس الزامی است.";
-        if (!empty($input_cls_edit['class_name']) && !empty($input_cls_edit['academic_year'])) {
-            $stmt_check_cls_name_edit = $conn->prepare("SELECT ClassID FROM Classes WHERE ClassName = ? AND AcademicYear = ? AND ClassID != ?");
-            if ($stmt_check_cls_name_edit) {
-                $stmt_check_cls_name_edit->bind_param("ssi", $input_cls_edit['class_name'], $input_cls_edit['academic_year'], $class_id_to_edit);
-                $stmt_check_cls_name_edit->execute();
-                if ($stmt_check_cls_name_edit->get_result()->num_rows > 0) {
-                    $errors_cls_edit['class_name'] = "کلاس دیگری با این نام در این سال تحصیلی قبلاً ثبت شده است.";
-                }
-                $stmt_check_cls_name_edit->close();
-            } else {$errors_cls_edit['db'] = "خطا بررسی نام کلاس: ".$conn->error;}
+// Fetch available teachers
+$available_teachers_edit = [];
+if ($conn) {
+    $stmt_teachers_edit = $conn->query(
+        "SELECT DISTINCT u.UserID, u.FirstName, u.LastName, u.Username
+         FROM Users u
+         LEFT JOIN UserRoles ur ON u.UserID = ur.UserID
+         LEFT JOIN Roles r ON ur.RoleID = r.RoleID
+         WHERE u.IsActive = TRUE AND (u.UserType = 'teacher' OR r.RoleName = 'مدرس')
+         ORDER BY u.LastName, u.FirstName"
+    );
+    if ($stmt_teachers_edit) {
+        while ($teacher = $stmt_teachers_edit->fetch_assoc()) {
+            $available_teachers_edit[] = $teacher;
         }
+        $stmt_teachers_edit->close();
+    } else {
+        $form_errors['fetch_teachers'] = "خطا در بارگذاری لیست مدرسین: " . $conn->error;
+    }
 
-        if ($input_cls_edit['teacher_id'] !== null) { // teacher_id can be empty string from select if "-- بدون مدرس --" selected
-            $teacher_exists_edit = false;
-            if($input_cls_edit['teacher_id'] == '') $input_cls_edit['teacher_id'] = null; // Treat empty string as NULL for DB
-            else {
-                 foreach($available_teachers_cls_edit as $atc_e) if($atc_e['UserID'] == $input_cls_edit['teacher_id']) $teacher_exists_edit = true;
-                 if(!$teacher_exists_edit) $errors_cls_edit['teacher_id'] = "مدرس انتخاب شده نامعتبر است.";
+    // Fetch class data for editing (on initial GET request)
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') { // Only fetch on initial load, not on POST error display
+        $stmt_fetch_class = $conn->prepare("SELECT ClassName, GradeLevel, AcademicYear, Description FROM Classes WHERE ClassID = ?");
+        if ($stmt_fetch_class) {
+            $stmt_fetch_class->bind_param("i", $class_id_to_edit);
+            $stmt_fetch_class->execute();
+            $result_class_fetch = $stmt_fetch_class->get_result();
+            if ($class_data = $result_class_fetch->fetch_assoc()) {
+                $class_name = $class_data['ClassName'];
+                $original_class_name = $class_data['ClassName'];
+                $grade_level = $class_data['GradeLevel'];
+                $academic_year = $class_data['AcademicYear'];
+                $original_academic_year = $class_data['AcademicYear'];
+                $description = $class_data['Description'];
+
+                $stmt_fetch_assigned_teachers = $conn->prepare("SELECT UserID FROM ClassTeachers WHERE ClassID = ?");
+                if ($stmt_fetch_assigned_teachers) {
+                    $stmt_fetch_assigned_teachers->bind_param("i", $class_id_to_edit);
+                    $stmt_fetch_assigned_teachers->execute();
+                    $result_assigned_teachers = $stmt_fetch_assigned_teachers->get_result();
+                    while ($row_teacher = $result_assigned_teachers->fetch_assoc()) {
+                        $teacher_ids_selected[] = $row_teacher['UserID'];
+                    }
+                    $stmt_fetch_assigned_teachers->close();
+                } else {
+                    $form_errors['fetch_assigned_teachers'] = "خطا در بارگذاری مدرسین فعلی کلاس: " . $conn->error;
+                }
+            } else {
+                $_SESSION['action_error'] = 'کلاس با شناسه ' . htmlspecialchars($class_id_to_edit) . ' یافت نشد.';
+                header("Location: index.php");
+                exit;
+            }
+            $stmt_fetch_class->close();
+        } else {
+            $form_errors['db_error'] = 'خطا در آماده سازی کوئری بارگذاری کلاس: ' . $conn->error;
+        }
+    } else { // On POST, repopulate from POST data if validation fails
+        $class_name = sanitize_input($_POST['class_name'] ?? '');
+        $grade_level = sanitize_input($_POST['grade_level'] ?? '');
+        $academic_year = sanitize_input($_POST['academic_year'] ?? '');
+        $description = sanitize_input($_POST['description'] ?? '');
+        $teacher_ids_selected = isset($_POST['teacher_ids']) && is_array($_POST['teacher_ids']) ? array_map('intval', $_POST['teacher_ids']) : [];
+        // Need to fetch original_class_name and original_academic_year again for comparison if not already set
+        if(empty($original_class_name) && $conn) {
+            $stmt_orig = $conn->prepare("SELECT ClassName, AcademicYear FROM Classes WHERE ClassID = ?");
+            if($stmt_orig) {
+                $stmt_orig->bind_param("i", $class_id_to_edit); $stmt_orig->execute();
+                $res_orig = $stmt_orig->get_result();
+                if($d_orig = $res_orig->fetch_assoc()){ $original_class_name = $d_orig['ClassName']; $original_academic_year = $d_orig['AcademicYear'];}
+                $stmt_orig->close();
             }
         }
-         if (empty($input_cls_edit['academic_year']) || !(preg_match('/^\d{4}-\d{4}$/', $input_cls_edit['academic_year']) || preg_match('/^\d{4}-\d{2}$/', $input_cls_edit['academic_year']) ) ) {
-            $errors_cls_edit['academic_year'] = "فرمت سال تحصیلی نامعتبر (مثال: 1403-1404).";
-        }
-        if (empty($input_cls_edit['grade_level'])) $errors_cls_edit['grade_level'] = "پایه / سطح کلاس الزامی است.";
+    }
+} else {
+    $form_errors['db_error'] = 'خطا در اتصال به پایگاه داده.';
+}
 
-        if (empty($errors_cls_edit)) {
-            $stmt_update_cls = $conn->prepare("UPDATE Classes SET ClassName = ?, TeacherUserID = ?, GradeLevel = ?, AcademicYear = ?, Description = ?, IsActive = ?, UpdatedAt = NOW() WHERE ClassID = ?");
-            if ($stmt_update_cls) {
-                $stmt_update_cls->bind_param("sisssii", $input_cls_edit['class_name'], $input_cls_edit['teacher_id'], $input_cls_edit['grade_level'], $input_cls_edit['academic_year'], $input_cls_edit['description'], $input_cls_edit['is_active'], $class_id_to_edit);
-                if ($stmt_update_cls->execute()) {
-                    $_SESSION['flash_message'] = ['type' => 'success', 'text' => "کلاس '" . htmlspecialchars($input_cls_edit['class_name']) . "' با موفقیت ویرایش شد."];
-                    regenerate_csrf_token('class_edit_form');
-                    header("Location: index.php?action_status=success_edit"); exit;
-                } else { $errors_cls_edit['db'] = "خطا در ویرایش کلاس: " . $stmt_update_cls->error; }
-                $stmt_update_cls->close();
-            } else { $errors_cls_edit['db'] = "خطا در آماده سازی کوئری ویرایش: " . $conn->error; }
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!isset($_POST['csrf_token']) || !verify_csrf_token($_POST['csrf_token'], $csrf_token_name)) {
+        $form_errors['csrf'] = 'خطای امنیتی CSRF.';
+    } else {
+        $csrf_token = regenerate_csrf_token($csrf_token_name);
+
+        // $class_name, $grade_level etc. are already populated from POST above if it's a POST request
+
+        // Validation
+        if (empty($class_name)) $form_errors['class_name'] = 'نام کلاس نمی‌تواند خالی باشد.';
+        if (empty($grade_level)) $form_errors['grade_level'] = 'مقطع تحصیلی نمی‌تواند خالی باشد.';
+        if (empty($academic_year)) $form_errors['academic_year'] = 'سال تحصیلی نمی‌تواند خالی باشد.';
+        elseif (!preg_match('/^\d{4}-\d{4}$/', $academic_year)) {
+            $form_errors['academic_year'] = 'فرمت سال تحصیلی نامعتبر است (مثال: 1403-1404).';
+        }
+        if (strlen($class_name) > 150) $form_errors['class_name'] = 'نام کلاس طولانی تر از حد مجاز است (150 کاراکتر).';
+        if (strlen($grade_level) > 100) $form_errors['grade_level'] = 'مقطع تحصیلی طولانی تر از حد مجاز است (100 کاراکتر).';
+        if (strlen($description) > 1000) $form_errors['description'] = 'توضیحات طولانی تر از حد مجاز است (1000 کاراکتر).';
+
+
+        if (empty($form_errors['class_name']) && empty($form_errors['academic_year']) &&
+            ($class_name !== $original_class_name || $academic_year !== $original_academic_year) && $conn) {
+            $stmt_check_class_edit = $conn->prepare("SELECT ClassID FROM Classes WHERE ClassName = ? AND AcademicYear = ? AND ClassID != ?");
+            if ($stmt_check_class_edit) {
+                $stmt_check_class_edit->bind_param("ssi", $class_name, $academic_year, $class_id_to_edit);
+                $stmt_check_class_edit->execute();
+                if ($stmt_check_class_edit->get_result()->num_rows > 0) {
+                    $form_errors['class_name'] = "کلاس دیگری با این نام در این سال تحصیلی قبلاً ثبت شده است.";
+                }
+                $stmt_check_class_edit->close();
+            } else {
+                $form_errors['db_error'] = "خطا در بررسی تکراری بودن کلاس (ویرایش): " . $conn->error;
+            }
+        }
+
+        if (empty($form_errors)) {
+            if ($conn) {
+                $conn->begin_transaction();
+                try {
+                    $stmt_update_class = $conn->prepare("UPDATE Classes SET ClassName = ?, GradeLevel = ?, AcademicYear = ?, Description = ? WHERE ClassID = ?");
+                    if (!$stmt_update_class) throw new Exception("خطا در آماده سازی کوئری بروزرسانی کلاس: " . $conn->error);
+
+                    $stmt_update_class->bind_param("ssssi", $class_name, $grade_level, $academic_year, $description, $class_id_to_edit);
+                    if (!$stmt_update_class->execute()) throw new Exception("خطا در بروزرسانی کلاس: " . $stmt_update_class->error);
+                    $stmt_update_class->close();
+
+                    $stmt_delete_teachers = $conn->prepare("DELETE FROM ClassTeachers WHERE ClassID = ?");
+                    if (!$stmt_delete_teachers) throw new Exception("خطا در آماده سازی حذف مدرسین قدیمی: " . $conn->error);
+                    $stmt_delete_teachers->bind_param("i", $class_id_to_edit);
+                    if (!$stmt_delete_teachers->execute()) throw new Exception("خطا در حذف مدرسین قدیمی: " . $stmt_delete_teachers->error);
+                    $stmt_delete_teachers->close();
+
+                    if (!empty($teacher_ids_selected)) {
+                        $stmt_assign_teacher_edit = $conn->prepare("INSERT INTO ClassTeachers (ClassID, UserID) VALUES (?, ?)");
+                        if (!$stmt_assign_teacher_edit) throw new Exception("خطا در آماده سازی تخصیص مدرس (ویرایش): " . $conn->error);
+                        foreach ($teacher_ids_selected as $teacher_id) {
+                             if ($teacher_id > 0) {
+                                $stmt_assign_teacher_edit->bind_param("ii", $class_id_to_edit, $teacher_id);
+                                if (!$stmt_assign_teacher_edit->execute()) throw new Exception("خطا در تخصیص مدرس $teacher_id (ویرایش): " . $stmt_assign_teacher_edit->error);
+                             }
+                        }
+                        $stmt_assign_teacher_edit->close();
+                    }
+
+                    $conn->commit();
+                    $_SESSION['action_success'] = "کلاس '" . htmlspecialchars($class_name) . " (" . htmlspecialchars($academic_year) . ")' با موفقیت بروزرسانی شد.";
+                    header("Location: index.php");
+                    exit;
+
+                } catch (Exception $e) {
+                    $conn->rollback();
+                    $form_errors['db_error'] = "خطای پایگاه داده: " . $e->getMessage();
+                }
+            } else {
+                $form_errors['db_error'] = 'خطا در اتصال به پایگاه داده.';
+            }
         }
     }
-    $csrf_token_class_edit = regenerate_csrf_token('class_edit_form');
 }
 ?>
-<div class="page-header"><h1>ویرایش کلاس: <?php echo htmlspecialchars($input_cls_edit['class_name'] ?: ($class_data_for_form['ClassName'] ?? '...'));?></h1>
-    <div class="page-header-actions"><a href="index.php" class="btn btn-secondary"><svg class="icon" width="16" height="16" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg><span>بازگشت به لیست</span></a></div></div>
 
-<?php if (!empty($errors_cls_edit)): ?><div class="alert alert-danger"><ul><?php foreach ($errors_cls_edit as $err_val_e): ?><li><?php echo htmlspecialchars($err_val_e); ?></li><?php endforeach; ?></ul></div><?php endif; ?>
+<div class="page-header">
+    <h1>ویرایش کلاس: <?php echo htmlspecialchars($original_class_name . ' (' . $original_academic_year . ')'); ?></h1>
+    <div class="page-header-actions">
+        <a href="index.php" class="btn btn-secondary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-right-circle icon" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M1 8a7 7 0 1 0 14 0A7 7 0 0 0 1 8zm15 0A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-4.5-.5a.5.5 0 0 0 0 1h5.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 1 0-.708.708L11.293 7.5H6.5a.5.5 0 0 0 0 1h4.793z"/></svg>
+            بازگشت به لیست کلاس‌ها
+        </a>
+    </div>
+</div>
 
-<?php if ($class_data_for_form || $_SERVER["REQUEST_METHOD"] == "POST"): // Show form if data loaded or if it's a POST request (even with load errors) ?>
-<div class="card shadow-sm"><div class="card-body">
-<form action="edit.php?class_id=<?php echo $class_id_to_edit; ?>" method="POST" class="form-container needs-validation" novalidate>
-    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_class_edit; ?>">
-    <input type="hidden" name="class_id_hidden" value="<?php echo $class_id_to_edit; ?>">
-    <div class="form-group">
-        <label for="class_name_cls_edit">نام کلاس <span class="text-danger">*</span></label>
-        <input type="text" class="form-control <?php echo isset($errors_cls_edit['class_name']) ? 'is-invalid' : ''; ?>" id="class_name_cls_edit" name="class_name" value="<?php echo htmlspecialchars($input_cls_edit['class_name']); ?>" required>
-        <?php if(isset($errors_cls_edit['class_name'])):?><div class="invalid-feedback"><?php echo $errors_cls_edit['class_name'];?></div><?php endif;?>
-    </div>
-    <div class="row">
-        <div class="form-group col-md-6">
-            <label for="teacher_id_cls_edit">مدرس اصلی</label>
-            <select name="teacher_id" id="teacher_id_cls_edit" class="form-control custom-select <?php echo isset($errors_cls_edit['teacher_id']) ? 'is-invalid' : ''; ?>">
-                <option value="">-- بدون مدرس اصلی --</option>
-                <?php foreach($available_teachers_cls_edit as $teacher_opt_e): ?>
-                <option value="<?php echo $teacher_opt_e['UserID']; ?>" <?php if($input_cls_edit['teacher_id'] == $teacher_opt_e['UserID']) echo 'selected';?>><?php echo htmlspecialchars($teacher_opt_e['FirstName'].' '.$teacher_opt_e['LastName'].' (@'.$teacher_opt_e['Username'].')');?></option>
-                <?php endforeach; ?>
-            </select>
-            <?php if(isset($errors_cls_edit['teacher_id'])):?><div class="invalid-feedback"><?php echo $errors_cls_edit['teacher_id'];?></div><?php endif;?>
-        </div>
-        <div class="form-group col-md-6">
-            <label for="grade_level_cls_edit">پایه / سطح <span class="text-danger">*</span></label>
-            <input list="grade_levels_list_edit" class="form-control <?php echo isset($errors_cls_edit['grade_level']) ? 'is-invalid' : ''; ?>" id="grade_level_cls_edit" name="grade_level" value="<?php echo htmlspecialchars($input_cls_edit['grade_level']); ?>" required>
-            <datalist id="grade_levels_list_edit">
-                <?php foreach($grade_level_options_edit as $gl_opt_e): ?><option value="<?php echo htmlspecialchars($gl_opt_e); ?>"><?php endforeach; ?>
-            </datalist>
-            <?php if(isset($errors_cls_edit['grade_level'])):?><div class="invalid-feedback"><?php echo $errors_cls_edit['grade_level'];?></div><?php endif;?>
-        </div>
-    </div>
-    <div class="form-group">
-        <label for="academic_year_cls_edit">سال تحصیلی <span class="text-danger">*</span></label>
-        <input type="text" class="form-control <?php echo isset($errors_cls_edit['academic_year']) ? 'is-invalid' : ''; ?>" id="academic_year_cls_edit" name="academic_year" value="<?php echo htmlspecialchars($input_cls_edit['academic_year']); ?>" placeholder="مثال: 1403-1404" required pattern="^\d{4}-\d{2,4}$">
-        <?php if(isset($errors_cls_edit['academic_year'])):?><div class="invalid-feedback"><?php echo $errors_cls_edit['academic_year'];?></div><?php endif;?>
-    </div>
-    <div class="form-group">
-        <label for="description_cls_edit_area">توضیحات</label>
-        <textarea class="form-control" id="description_cls_edit_area" name="description_cls_edit" rows="3"><?php echo htmlspecialchars($input_cls_edit['description']); ?></textarea>
-    </div>
-    <div class="form-group">
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="is_active_cls_edit_check" name="is_active_cls_edit" value="1" <?php echo $input_cls_edit['is_active'] ? 'checked' : ''; ?>>
-            <label class="form-check-label" for="is_active_cls_edit_check">کلاس فعال باشد</label>
-        </div>
-    </div>
-    <div class="form-actions mt-4">
-        <button type="submit" name="submit_edit_class" class="btn btn-primary btn-lg">
-            <svg class="icon" width="18" height="18" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-            <span>ذخیره تغییرات</span>
-        </button>
-        <a href="index.php" class="btn btn-outline-secondary btn-lg">انصراف</a>
-    </div>
-</form>
-</div></div>
-<?php elseif(isset($errors_cls_edit['load'])): ?>
-    <div class="alert alert-danger"><?php echo htmlspecialchars($errors_cls_edit['load']); ?></div>
+<?php if (!empty($form_errors['csrf'])): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert"><?php echo $form_errors['csrf']; ?><button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>
 <?php endif; ?>
-<script> /* Basic Bootstrap validation ... */
-(function () { 'use strict'; var forms = document.querySelectorAll('.needs-validation');
-  Array.prototype.slice.call(forms).forEach(function (form) {
-  form.addEventListener('submit', function (event) { if (!form.checkValidity()) { event.preventDefault(); event.stopPropagation(); } form.classList.add('was-validated');}, false);});})();
+<?php if (!empty($form_errors['db_error'])): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert"><?php echo $form_errors['db_error']; ?><button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>
+<?php endif; ?>
+<?php if (!empty($form_errors['fetch_teachers']) || !empty($form_errors['fetch_assigned_teachers'])): ?>
+    <div class="alert alert-warning alert-dismissible fade show" role="alert">
+        <?php echo $form_errors['fetch_teachers'] ?? ''; ?> <?php echo $form_errors['fetch_assigned_teachers'] ?? ''; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+<?php endif; ?>
+
+
+<div class="card">
+    <div class="card-body">
+        <form method="POST" action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]) . "?class_id=" . $class_id_to_edit; ?>" class="form-container needs-validation" novalidate>
+            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="class_name" class="form-label">نام کلاس <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control <?php echo isset($form_errors['class_name']) ? 'is-invalid' : ''; ?>"
+                           id="class_name" name="class_name" value="<?php echo htmlspecialchars($class_name); ?>" required>
+                    <?php if (isset($form_errors['class_name'])): ?><div class="invalid-feedback"><?php echo $form_errors['class_name']; ?></div><?php endif; ?>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label for="grade_level" class="form-label">مقطع تحصیلی / سطح <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control <?php echo isset($form_errors['grade_level']) ? 'is-invalid' : ''; ?>"
+                           id="grade_level" name="grade_level" value="<?php echo htmlspecialchars($grade_level); ?>" required>
+                    <?php if (isset($form_errors['grade_level'])): ?><div class="invalid-feedback"><?php echo $form_errors['grade_level']; ?></div><?php endif; ?>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="academic_year" class="form-label">سال تحصیلی <span class="text-danger">*</span></label>
+                    <select class="form-select <?php echo isset($form_errors['academic_year']) ? 'is-invalid' : ''; ?>"
+                            id="academic_year" name="academic_year" required>
+                        <option value="">انتخاب کنید...</option>
+                        <?php foreach ($academic_years_dropdown_edit as $year_val_edit): ?>
+                            <option value="<?php echo $year_val_edit; ?>" <?php echo ($academic_year === $year_val_edit) ? 'selected' : ''; ?>>
+                                <?php echo $year_val_edit; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php if (isset($form_errors['academic_year'])): ?><div class="invalid-feedback"><?php echo $form_errors['academic_year']; ?></div><?php endif; ?>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label for="teacher_ids" class="form-label">مدرس(ها)</label>
+                    <select class="form-select <?php echo isset($form_errors['teacher_ids']) ? 'is-invalid' : ''; ?>"
+                            id="teacher_ids" name="teacher_ids[]" multiple>
+                        <?php if (empty($available_teachers_edit) && empty($form_errors['fetch_teachers'])): ?>
+                            <option value="" disabled>هیچ مدرس فعالی یافت نشد.</option>
+                        <?php elseif (!empty($available_teachers_edit)): ?>
+                            <?php foreach ($available_teachers_edit as $teacher_edit): ?>
+                                <option value="<?php echo $teacher_edit['UserID']; ?>" <?php echo in_array($teacher_edit['UserID'], $teacher_ids_selected) ? 'selected' : ''; ?>>
+                                     <?php echo htmlspecialchars(trim($teacher_edit['LastName'] . ' ' . $teacher_edit['FirstName'])) . ' (@' . htmlspecialchars($teacher_edit['Username']) . ')'; ?>
+                                </option>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </select>
+                     <?php if (isset($form_errors['teacher_ids'])): ?><div class="invalid-feedback d-block"><?php echo $form_errors['teacher_ids']; ?></div><?php endif; ?>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="description" class="form-label">توضیحات</label>
+                <textarea class="form-control <?php echo isset($form_errors['description']) ? 'is-invalid' : ''; ?>"
+                          id="description" name="description" rows="3"><?php echo htmlspecialchars($description); ?></textarea>
+                <?php if (isset($form_errors['description'])): ?><div class="invalid-feedback"><?php echo $form_errors['description']; ?></div><?php endif; ?>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">ذخیره تغییرات</button>
+                <a href="index.php" class="btn btn-secondary">انصراف</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<link href="<?php echo get_base_url(); ?>assets/js/select2/css/select2.min.css" rel="stylesheet" />
+<link href="<?php echo get_base_url(); ?>assets/js/select2-bootstrap-5-theme/select2-bootstrap-5-theme.min.css" rel="stylesheet" />
+<script src="<?php echo get_base_url(); ?>assets/js/select2/js/select2.full.min.js"></script>
+<script src="<?php echo get_base_url(); ?>assets/js/select2/js/i18n/fa.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    if (typeof jQuery !== 'undefined' && jQuery.fn.select2) {
+        $('#teacher_ids').select2({
+            dir: "rtl",
+            placeholder: "یک یا چند مدرس انتخاب کنید...",
+            allowClear: true,
+            language: "fa",
+            theme: "bootstrap-5"
+        });
+    }
+});
 </script>
-<?php require_once __DIR__ . '/../includes/footer.php'; ?>
+
+<?php
+require_once __DIR__ . '/../includes/footer.php';
+?>

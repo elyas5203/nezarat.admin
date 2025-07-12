@@ -1,128 +1,95 @@
 <?php
-// admin/classes/actions/delete_class.php
-require_once __DIR__ . '/../../../includes/config/db_config.php'; // Adjusted path
-require_once __DIR__ . '/../../../includes/functions/helper_functions.php'; // For session, auth, CSRF
+require_once __DIR__ . '/../../../includes/config/db_config.php';
+require_once __DIR__ . '/../../../includes/functions/helper_functions.php';
 
-if (session_status() == PHP_SESSION_NONE) { session_start(); }
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Ensure admin is logged in
 if (!is_admin_logged_in()) {
-    // Adjust to your admin login path if different
-    header("Location: " . ($admin_base_url ?? '/my_site/admin') . "/auth/login.php");
+    $_SESSION['action_error'] = 'برای انجام این عملیات باید به عنوان ادمین وارد شده باشید.';
+    header("Location: " . get_base_url() . "admin/auth/login.php");
     exit;
 }
 
-$class_id_to_delete = null;
-$error_message_cls_del = '';
-$success_message_cls_del = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $class_id_to_delete = isset($_POST['class_id']) ? (int)$_POST['class_id'] : 0;
+    $submitted_csrf_token = $_POST['csrf_token'] ?? '';
 
-// CSRF Token Verification - Token name must match the one generated on the index page for delete links
-$csrf_token_from_link_cls_del = $_GET['csrf_token'] ?? '';
-if (!verify_csrf_token($csrf_token_from_link_cls_del, 'classes_index_actions')) {
-    $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطای CSRF! درخواست حذف نامعتبر یا توکن منقضی شده.'];
-    header("Location: ../index.php");
-    exit;
-}
-// Regenerate the token for the index page to prevent reuse of the same token if user navigates back
-regenerate_csrf_token('classes_index_actions');
+    // The CSRF token for deletion is generated on the index.php page with name 'delete_class'
+    if (!verify_csrf_token($submitted_csrf_token, 'delete_class')) {
+        $_SESSION['action_error'] = 'خطای امنیتی CSRF. عملیات حذف کلاس ناموفق بود.';
+        header("Location: ../index.php");
+        exit;
+    }
+    regenerate_csrf_token('delete_class'); // Regenerate after successful verification
 
-if (isset($_GET['class_id']) && is_numeric($_GET['class_id'])) {
-    $class_id_to_delete = (int)$_GET['class_id'];
+    if ($class_id_to_delete <= 0) {
+        $_SESSION['action_error'] = 'شناسه کلاس برای حذف نامعتبر است.';
+        header("Location: ../index.php");
+        exit;
+    }
 
-    $stmt_check_cls_del = $conn->prepare("SELECT ClassName FROM Classes WHERE ClassID = ?");
-    if ($stmt_check_cls_del) {
-        $stmt_check_cls_del->bind_param("i", $class_id_to_delete);
-        $stmt_check_cls_del->execute();
-        $result_check_cls_del = $stmt_check_cls_del->get_result();
+    if (!$conn) {
+        $_SESSION['action_error'] = 'خطا در اتصال به پایگاه داده.';
+        header("Location: ../index.php");
+        exit;
+    }
 
-        if ($result_check_cls_del->num_rows === 1) {
-            $conn->begin_transaction();
-            try {
-                // --- Handle Dependencies ---
-                // 1. FormSubmissions: Set ClassID to NULL
-                $stmt_update_submissions = $conn->prepare("UPDATE FormSubmissions SET ClassID = NULL WHERE ClassID = ?");
-                if (!$stmt_update_submissions) throw new Exception("خطا بروزرسانی FormSubmissions: " . $conn->error);
-                $stmt_update_submissions->bind_param("i", $class_id_to_delete);
-                if (!$stmt_update_submissions->execute()) throw new Exception("اجرای بروزرسانی FormSubmissions ناموفق: " . $stmt_update_submissions->error);
-                $stmt_update_submissions->close();
+    $conn->begin_transaction();
+    try {
+        // 1. Delete teacher assignments for this class from ClassTeachers
+        $stmt_delete_teachers = $conn->prepare("DELETE FROM ClassTeachers WHERE ClassID = ?");
+        if (!$stmt_delete_teachers) throw new Exception("خطا در آماده سازی حذف تخصیص مدرسین: " . $conn->error);
+        $stmt_delete_teachers->bind_param("i", $class_id_to_delete);
+        // Execute, but don't throw error if it fails due to no teachers (it's fine)
+        $stmt_delete_teachers->execute();
+        $stmt_delete_teachers->close();
 
-                // 2. BookletAssignments: Set ClassID to NULL
-                $stmt_update_booklets = $conn->prepare("UPDATE BookletAssignments SET ClassID = NULL WHERE ClassID = ?");
-                if (!$stmt_update_booklets) throw new Exception("خطا بروزرسانی BookletAssignments: " . $conn->error);
-                $stmt_update_booklets->bind_param("i", $class_id_to_delete);
-                if (!$stmt_update_booklets->execute()) throw new Exception("اجرای بروزرسانی BookletAssignments ناموفق: " . $stmt_update_booklets->error);
-                $stmt_update_booklets->close();
+        // 2. Consider other dependencies:
+        //    - FormSubmissions related to this ClassID.
+        //    - Student enrollments (if a StudentsInClass table exists with ClassID).
+        //    - Parent meetings (if ParentsMeetings table exists with ClassID).
+        //    - Any other table that might have a ClassID foreign key.
+        //    Policy: For now, we rely on DB foreign key constraints (ON DELETE RESTRICT by default)
+        //    to prevent deletion if critical dependencies exist. The error message will guide admin.
+        //    A more robust solution might involve:
+        //      a) Explicitly checking and warning/preventing.
+        //      b) Archiving the class instead of deleting.
+        //      c) Setting ClassID to NULL in dependent tables if the schema allows (ON DELETE SET NULL).
 
-                // 3. ClassServices (Parvareshi): Set ClassID to NULL
-                // Check if table exists before trying to update (optional, good for modularity)
-                // if ($conn->query("SHOW TABLES LIKE 'ClassServices'")->num_rows > 0) { ... }
-                $stmt_update_class_services = $conn->prepare("UPDATE ClassServices SET ClassID = NULL WHERE ClassID = ?");
-                if ($stmt_update_class_services) { // Proceed even if table doesn't exist (prepare will be false)
-                    $stmt_update_class_services->bind_param("i", $class_id_to_delete);
-                    $stmt_update_class_services->execute(); // Errors here might be acceptable if table doesn't exist or no rows match
-                    $stmt_update_class_services->close();
-                }
+        // 3. Delete the class itself from Classes table
+        $stmt_delete_class = $conn->prepare("DELETE FROM Classes WHERE ClassID = ?");
+        if (!$stmt_delete_class) throw new Exception("خطا در آماده سازی حذف کلاس: " . $conn->error);
 
-                // 4. RentalBookings (Parvareshi): Set ClassID to NULL
-                $stmt_update_rental_bookings = $conn->prepare("UPDATE RentalBookings SET ClassID = NULL WHERE ClassID = ?");
-                if ($stmt_update_rental_bookings) {
-                    $stmt_update_rental_bookings->bind_param("i", $class_id_to_delete);
-                    $stmt_update_rental_bookings->execute();
-                    $stmt_update_rental_bookings->close();
-                }
+        $stmt_delete_class->bind_param("i", $class_id_to_delete);
 
-                // 5. Meetings (e.g., parents_meeting): Set ClassID to NULL
-                $stmt_update_meetings = $conn->prepare("UPDATE Meetings SET ClassID = NULL WHERE ClassID = ?");
-                if ($stmt_update_meetings) {
-                    $stmt_update_meetings->bind_param("i", $class_id_to_delete);
-                    $stmt_update_meetings->execute();
-                    $stmt_update_meetings->close();
-                }
-
-                // --- Delete the class itself ---
-                $stmt_delete_class_main = $conn->prepare("DELETE FROM Classes WHERE ClassID = ?");
-                if (!$stmt_delete_class_main) throw new Exception("خطا آماده سازی حذف کلاس: " . $conn->error);
-                $stmt_delete_class_main->bind_param("i", $class_id_to_delete);
-
-                if ($stmt_delete_class_main->execute()) {
-                    if ($stmt_delete_class_main->affected_rows > 0) {
-                        $conn->commit();
-                        $success_message_cls_del = "کلاس با موفقیت حذف شد. وابستگی‌های مرتبط بروزرسانی شدند.";
-                    } else {
-                        throw new Exception("کلاس برای حذف یافت نشد (پس از بررسی اولیه).");
-                    }
-                } else {
-                    throw new Exception("خطا در حذف کلاس: " . $stmt_delete_class_main->error);
-                }
-                $stmt_delete_class_main->close();
-
-            } catch (mysqli_sql_exception $e_cls_del_sql) {
+        if ($stmt_delete_class->execute()) {
+            if ($stmt_delete_class->affected_rows > 0) {
+                $conn->commit();
+                $_SESSION['action_success'] = 'کلاس با شناسه ' . $class_id_to_delete . ' و تمامی تخصیص‌های مدرس آن (در صورت وجود) با موفقیت حذف شدند.';
+            } else {
                 $conn->rollback();
-                if ($e_cls_del_sql->getCode() == 1451) {
-                     $error_message_cls_del = "حذف ناموفق: این کلاس هنوز به موجودیت‌های دیگری وابسته است که به طور خودکار قابل بروزرسانی نیستند. لطفاً ابتدا این وابستگی‌ها را بررسی و مدیریت کنید.";
-                } else {
-                    $error_message_cls_del = "خطای پایگاه داده: " . $e_cls_del_sql->getMessage();
-                }
-            } catch (Exception $e_cls_del) {
-                $conn->rollback();
-                $error_message_cls_del = "خطای عمومی: " . $e_cls_del->getMessage();
+                $_SESSION['action_error'] = 'کلاس مورد نظر برای حذف یافت نشد یا قبلاً حذف شده است.';
             }
         } else {
-            $error_message_cls_del = "کلاسی با این شناسه یافت نشد.";
+            if ($conn->errno == 1451) {
+                 throw new Exception('امکان حذف این کلاس وجود ندارد زیرا اطلاعات وابسته دیگری (مانند فرم‌های ثبت شده، تخصیص دانش آموزان، یا جلسات اولیا مرتبط با این کلاس) در سیستم موجود است. لطفاً ابتدا این وابستگی‌ها را برطرف نمایید.');
+            }
+            throw new Exception("خطا در اجرای حذف کلاس: " . $stmt_delete_class->error);
         }
-        $stmt_check_cls_del->close();
-    } else {
-        $error_message_cls_del = "خطا در بررسی وجود کلاس: " . $conn->error;
+        $stmt_delete_class->close();
+
+    } catch (Exception $e) {
+        $conn->rollback();
+        $_SESSION['action_error'] = $e->getMessage();
     }
+
 } else {
-    $error_message_cls_del = "شناسه کلاس برای حذف نامعتبر یا ارسال نشده است.";
+    $_SESSION['action_error'] = 'درخواست نامعتبر برای حذف کلاس (متد غیر POST).';
 }
 
-$redirect_url_cls_del = "../index.php"; // Redirect back to classes list
-if (!empty($success_message_cls_del)) {
-    $_SESSION['flash_message'] = ['type' => 'success', 'text' => $success_message_cls_del];
-} else {
-    $_SESSION['flash_message'] = ['type' => 'danger', 'text' => $error_message_cls_del ?: "خطای نامشخص در عملیات حذف کلاس."];
-}
-
-header("Location: " . $redirect_url_cls_del);
+header("Location: ../index.php");
 exit;
 ?>

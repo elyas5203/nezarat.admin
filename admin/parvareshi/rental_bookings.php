@@ -1,194 +1,248 @@
 <?php
-// admin/parvareshi/rental_bookings.php
 require_once __DIR__ . '/../includes/header.php';
 
-$csrf_token_bookings = generate_csrf_token('parvareshi_rental_bookings_action');
-$errors_bk = [];
-$admin_user_id_booking = get_current_user_id();
+$action_rb_page = $_GET['action'] ?? 'list';
+$booking_id_rb_url_param = isset($_GET['booking_id']) ? (int)$_GET['booking_id'] : 0;
 
-$booking_status_options = [
-    'requested' => 'درخواست شده', 'approved' => 'تایید شده', 'rented' => 'تحویل داده شده',
-    'returned' => 'بازگردانده شده', 'cancelled' => 'لغو شده'
+$bookings_list_display = [];
+$booking_details_rb_display = null;
+$form_errors_rb_page_display = [];
+$page_title_rb_page_display = "مدیریت رزروهای کرایه‌چی";
+
+$csrf_token_name_rb_status_update = 'parvareshi_booking_status_update_action';
+// Note: The CSRF token for the main form of this page (if any for list filters) would be different.
+// This token is for the status update form within the view page.
+
+// Booking Statuses and Badge classes (can be moved to a helper if used elsewhere)
+$booking_statuses_rb_map_display = [
+    'pending_approval' => 'در انتظار تایید',
+    'approved' => 'تایید شده (آماده تحویل)',
+    'rejected' => 'رد شده',
+    'picked_up' => 'تحویل داده شده',
+    'returned' => 'بازگردانده شده',
+    'cancelled_by_user' => 'لغو توسط کاربر',
+    'cancelled_by_admin' => 'لغو توسط ادمین'
 ];
-$booking_status_badge = [
-    'requested' => 'warning', 'approved' => 'info', 'rented' => 'primary',
-    'returned' => 'success', 'cancelled' => 'secondary'
-];
-
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_booking_status'])) {
-    if (!verify_csrf_token($_POST['csrf_token'] ?? '', 'parvareshi_rental_bookings_action')) {
-        $errors_bk[] = 'خطای CSRF!';
-    } else {
-        $booking_id_to_update = isset($_POST['booking_id_status']) ? (int)$_POST['booking_id_status'] : null;
-        $new_status_bk = sanitize_input($_POST['new_status'] ?? '');
-        $return_date_bk_post = sanitize_input($_POST['return_date_status'] ?? '');
-
-        if (empty($booking_id_to_update)) $errors_bk[] = "شناسه رزرو نامعتبر.";
-        if (!array_key_exists($new_status_bk, $booking_status_options)) $errors_bk[] = "وضعیت جدید نامعتبر.";
-        if ($new_status_bk === 'returned' && empty($return_date_bk_post)) {
-            $errors_bk[] = "برای وضعیت 'بازگردانده شده'، تاریخ بازگشت الزامی است.";
-        } elseif (!empty($return_date_bk_post) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $return_date_bk_post)) {
-            $errors_bk[] = "فرمت تاریخ بازگشت نامعتبر (YYYY-MM-DD).";
-        }
-
-        if (empty($errors_bk)) {
-            $conn->begin_transaction();
-            try {
-                $stmt_get_booking_details = $conn->prepare("SELECT ItemID, Quantity, Status FROM RentalBookings WHERE BookingID = ? FOR UPDATE"); // Lock row
-                if(!$stmt_get_booking_details) throw new Exception("خطا خواندن اطلاعات رزرو: ".$conn->error);
-                $stmt_get_booking_details->bind_param("i", $booking_id_to_update);
-                $stmt_get_booking_details->execute();
-                $booking_details_res = $stmt_get_booking_details->get_result();
-                if(!($booking_current_data = $booking_details_res->fetch_assoc())) throw new Exception("رزرو یافت نشد.");
-                $stmt_get_booking_details->close();
-
-                $old_status_bk_logic = $booking_current_data['Status'];
-                $item_id_bk_logic = $booking_current_data['ItemID'];
-                $quantity_booked_bk_logic = $booking_current_data['Quantity'];
-
-                $sql_update_bk = "UPDATE RentalBookings SET Status = ?, ApprovedByUserID = CASE WHEN ? IN ('approved', 'rented', 'returned') AND ApprovedByUserID IS NULL THEN ? ELSE ApprovedByUserID END, UpdatedAt = NOW()";
-                $params_update_bk = [$new_status_bk, $new_status_bk, $admin_user_id_booking];
-                $types_update_bk = "ssi";
-
-                if ($new_status_bk === 'returned' && !empty($return_date_bk_post)) {
-                    $sql_update_bk .= ", ReturnDate = ?"; $params_update_bk[] = $return_date_bk_post; $types_update_bk .= "s";
-                } else if ($new_status_bk !== 'returned' && $old_status_bk_logic === 'returned') {
-                    $sql_update_bk .= ", ReturnDate = NULL";
-                }
-                $sql_update_bk .= " WHERE BookingID = ?"; $params_update_bk[] = $booking_id_to_update; $types_update_bk .= "i";
-
-                $stmt_update_bk_logic = $conn->prepare($sql_update_bk);
-                if (!$stmt_update_bk_logic) throw new Exception("خطا آماده سازی بروزرسانی: " . $conn->error);
-                $stmt_update_bk_logic->bind_param($types_update_bk, ...$params_update_bk);
-
-                if ($stmt_update_bk_logic->execute()) {
-                    $quantity_change_logic = 0;
-                    if ($old_status_bk_logic !== $new_status_bk) {
-                        if (in_array($new_status_bk, ['approved', 'rented']) && !in_array($old_status_bk_logic, ['approved', 'rented'])) {
-                            $quantity_change_logic = - $quantity_booked_bk_logic;
-                        } elseif (in_array($new_status_bk, ['returned', 'cancelled']) && in_array($old_status_bk_logic, ['approved', 'rented'])) {
-                            $quantity_change_logic = + $quantity_booked_bk_logic;
-                        }
-                    }
-
-                    if ($quantity_change_logic !== 0) {
-                        $stmt_check_item_qty = $conn->prepare("SELECT QuantityAvailable FROM RentalItems WHERE ItemID = ? FOR UPDATE"); // Lock item row
-                        if(!$stmt_check_item_qty) throw new Exception("خطا خواندن موجودی کالا: ".$conn->error);
-                        $stmt_check_item_qty->bind_param("i", $item_id_bk_logic); $stmt_check_item_qty->execute();
-                        $current_item_qty_res = $stmt_check_item_qty->get_result()->fetch_assoc();
-                        $stmt_check_item_qty->close();
-                        if(!$current_item_qty_res) throw new Exception("کالای مربوط به رزرو یافت نشد.");
-
-                        if ($quantity_change_logic < 0 && $current_item_qty_res['QuantityAvailable'] < abs($quantity_change_logic)) {
-                            throw new Exception("موجودی کالا (".htmlspecialchars($available_items_bk[$item_id_bk_logic]['ItemName'] ?? 'کالا').": ".$current_item_qty_res['QuantityAvailable'].") برای این تعداد (".abs($quantity_change_logic).") کافی نیست.");
-                        }
-
-                        $stmt_adj_qty_logic = $conn->prepare("UPDATE RentalItems SET QuantityAvailable = QuantityAvailable + ? WHERE ItemID = ?");
-                        if(!$stmt_adj_qty_logic) throw new Exception("خطا آماده سازی تغییر موجودی: ".$conn->error);
-                        $stmt_adj_qty_logic->bind_param("ii", $quantity_change_logic, $item_id_bk_logic);
-                        if(!$stmt_adj_qty_logic->execute()) throw new Exception("خطا در بروزرسانی موجودی کالا: ".$stmt_adj_qty_logic->error);
-                        $stmt_adj_qty_logic->close();
-                    }
-
-                    $conn->commit();
-                    $_SESSION['flash_message'] = ['type' => 'success', 'text' => 'وضعیت رزرو بروزرسانی شد.'];
-                } else { throw new Exception("خطا بروزرسانی وضعیت: " . $stmt_update_bk_logic->error); }
-                $stmt_update_bk_logic->close();
-            } catch (Exception $e_bk_update_trans) { $conn->rollback(); $errors_bk[] = $e_bk_update_trans->getMessage(); }
-            if(empty($errors_bk)) { header("Location: rental_bookings.php"); exit; }
-        }
+if (!function_exists('get_booking_status_badge_class_rb_page')) {
+    function get_booking_status_badge_class_rb_page($status_key) {
+        $s_rb_page = strtolower($status_key ?? '');
+        if (in_array($s_rb_page, ['approved', 'picked_up'])) return 'success';
+        if (in_array($s_rb_page, ['rejected', 'cancelled_by_user', 'cancelled_by_admin'])) return 'danger';
+        if ($s_rb_page === 'pending_approval') return 'warning text-dark';
+        if ($s_rb_page === 'returned') return 'info';
+        return 'secondary';
     }
-    $csrf_token_bookings = regenerate_csrf_token('parvareshi_rental_bookings_action');
 }
 
-$bookings_list_q_main = $conn->query("
-    SELECT rb.*, ri.ItemName, ri.QuantityAvailable AS ItemMaxQuantity,
-           CONCAT(u.FirstName, ' ', u.LastName) as UserName, u.Username as UserUName,
-           c.ClassName,
-           CONCAT(u_appr.FirstName, ' ', u_appr.LastName) as ApproverName
-    FROM RentalBookings rb
-    JOIN RentalItems ri ON rb.ItemID = ri.ItemID
-    JOIN Users u ON rb.UserID = u.UserID
-    LEFT JOIN Classes c ON rb.ClassID = c.ClassID
-    LEFT JOIN Users u_appr ON rb.ApprovedByUserID = u_appr.UserID
-    ORDER BY FIELD(rb.Status, 'requested', 'approved', 'rented'), rb.RentalDate DESC, rb.BookingDate DESC
-    LIMIT 100 ");
-?>
-<div class="page-header"><h1>مدیریت رزروهای کرایه‌چی</h1>
-    <div class="page-header-actions"><a href="rental_items.php" class="btn btn-secondary">مدیریت اقلام</a></div></div>
+// Handle POST for status update
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_booking_status'])) {
+    // Generate/regenerate token for this specific action instance if it's inside a loop or multiple forms on page
+    $booking_id_to_update_status = isset($_POST['booking_id']) ? (int)$_POST['booking_id'] : 0;
+    $csrf_token_rb_status_update_val = generate_csrf_token($csrf_token_name_rb_status_update . '_' . $booking_id_to_update_status);
 
-<?php if (isset($_SESSION['flash_message'])) { $flash_bk_idx_page = $_SESSION['flash_message']; echo "<div class='alert alert-{$flash_bk_idx_page['type']} alert-dismissible fade show'>{$flash_bk_idx_page['text']}<button type='button' class='close' data-dismiss='alert'>&times;</button></div>"; unset($_SESSION['flash_message']); echo "<script> /*Dismiss JS*/</script>"; } ?>
-<?php if (!empty($errors_bk)): ?> <div class="alert alert-danger"><ul><?php foreach ($errors_bk as $err_bk_item_page): ?><li><?php echo htmlspecialchars($err_bk_item_page); ?></li><?php endforeach; ?></ul></div> <?php endif; ?>
+    if (!verify_csrf_token($_POST['csrf_token'] ?? '', $csrf_token_name_rb_status_update . '_' . $booking_id_to_update_status)) {
+        $form_errors_rb_page_display['csrf'] = "خطای CSRF.";
+    } else {
+        // Regenerate after successful verification if needed, or manage per instance
+        // For simplicity, assume one update action per page load for now, or use unique token names.
+        $new_status_rb_update = sanitize_input($_POST['new_status'] ?? '');
+        $admin_notes_rb_update = sanitize_input($_POST['admin_notes'] ?? null);
 
-<div class="card shadow-sm">
-    <div class="card-header"><span class="card-title-text">لیست رزروها (۱۰۰ مورد اخیر)</span></div>
-    <div class="card-body">
-    <?php if($bookings_list_q_main && $bookings_list_q_main->num_rows > 0): ?><div class="table-responsive"><table class="table table-sm table-striped table-hover rental-bookings-table">
-        <thead><tr><th>#</th><th>قلم</th><th>کاربر/کلاس</th><th>مناسبت</th><th>تاریخ کرایه</th><th>تاریخ بازگشت</th><th>تعداد</th><th>وضعیت</th><th>تاییدکننده</th><th>عملیات</th></tr></thead><tbody>
-        <?php $bk_row_idx_page = 1; while($bk_item_page = $bookings_list_q_main->fetch_assoc()): ?>
-        <tr class="status-row-<?php echo htmlspecialchars($bk_item_page['Status']);?>"><td><?php echo $bk_row_idx_page++; ?></td>
-            <td><strong><?php echo htmlspecialchars($bk_item_page['ItemName']);?></strong></td>
-            <td><?php echo htmlspecialchars($bk_item_page['UserName']);?><small class="d-block text-muted"><?php if($bk_item_page['ClassName']) echo 'کلاس: '.htmlspecialchars($bk_item_page['ClassName']); else echo '@'.$bk_item_page['UserUName'];?></small></td>
-            <td><?php echo htmlspecialchars($bk_item_page['EventName'] ?? '-');?></td>
-            <td><?php echo to_jalali($bk_item_page['RentalDate'], 'yyyy/MM/dd');?></td>
-            <td><?php echo $bk_item_page['ReturnDate'] ? to_jalali($bk_item_page['ReturnDate'], 'yyyy/MM/dd') : '-';?></td>
-            <td class="text-center"><?php echo $bk_item_page['Quantity'];?></td>
-            <td><span class="badge badge-<?php echo $booking_status_badge[$bk_item_page['Status']] ?? 'light';?> p-2"><?php echo $booking_status_options[$bk_item_page['Status']] ?? $bk_item_page['Status'];?></span></td>
-            <td><small><?php echo htmlspecialchars($bk_item_page['ApproverName'] ?? '-');?></small></td>
-            <td class="actions-cell">
-                <button type="button" class="btn btn-xs btn-info btn-change-status" data-toggle="modal" data-target="#statusModal"
-                        data-bookingid="<?php echo $bk_item_page['BookingID'];?>" data-currentstatus="<?php echo $bk_item_page['Status'];?>"
-                        data-itemname="<?php echo htmlspecialchars($bk_item_page['ItemName']);?>" data-username="<?php echo htmlspecialchars($bk_item_page['UserName']);?>"
-                        data-returndate="<?php echo htmlspecialchars($bk_item_page['ReturnDate'] ? (new DateTime($bk_item_page['ReturnDate']))->format('Y-m-d') : ''); ?>"
-                        title="تغییر وضعیت رزرو">
-                    <svg class="icon" width="12" viewBox="0 0 24 24"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34"/><polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/></svg>
-                </button>
-            </td></tr>
-        <?php endwhile; ?></tbody></table></div>
-    <?php else: ?><p class="text-muted text-center">هنوز رزروی ثبت نشده.</p><?php endif; if($bookings_list_q_main) $bookings_list_q_main->close();?>
-    </div></div>
+        if ($booking_id_to_update_status > 0 && array_key_exists($new_status_rb_update, $booking_statuses_rb_map_display) && $conn) {
+            $conn->begin_transaction();
+            try {
+                // Fetch old status and item details for quantity adjustment
+                $stmt_old_data = $conn->prepare("SELECT ItemID, QuantityRequested, Status FROM ParvareshiRentalBookings WHERE BookingID = ?");
+                if(!$stmt_old_data) throw new Exception("خطا در خواندن اطلاعات رزرو: " . $conn->error);
+                $stmt_old_data->bind_param("i", $booking_id_to_update_status);
+                $stmt_old_data->execute();
+                $old_data_res = $stmt_old_data->get_result();
+                if(!($old_booking_data = $old_data_res->fetch_assoc())) throw new Exception("رزرو برای بروزرسانی یافت نشد.");
+                $stmt_old_data->close();
 
-<div class="modal fade" id="statusModal" tabindex="-1" role="dialog" aria-labelledby="statusModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-centered" role="document"><div class="modal-content">
-    <form action="rental_bookings.php" method="POST"> <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_bookings; ?>"> <input type="hidden" name="booking_id_status" id="modal_booking_id_status_val">
-    <div class="modal-header"><h5 class="modal-title" id="statusModalLabelNew">تغییر وضعیت رزرو</h5><button type="button" class="close" data-dismiss="modal">&times;</button></div>
-    <div class="modal-body">
-        <p>رزرو قلم <strong id="modal_item_name_status_disp_val"></strong> برای <strong id="modal_user_name_status_disp_val"></strong>.</p>
-        <div class="form-group"><label for="modal_new_status_select_val">وضعیت جدید <span class="text-danger">*</span></label>
-        <select name="new_status" id="modal_new_status_select_val" class="form-control custom-select" required onchange="document.getElementById('return_date_group_modal_val').style.display = (this.value === 'returned' ? 'block' : 'none');">
-            <?php foreach($booking_status_options as $skey_m_modal_val => $sval_m_modal_val): ?><option value="<?php echo $skey_m_modal_val;?>"><?php echo $sval_m_modal_val;?></option><?php endforeach; ?>
-        </select></div>
-        <div class="form-group" id="return_date_group_modal_val" style="display:none;">
-            <label for="modal_return_date_status_input_val">تاریخ بازگشت <span class="text-danger">*</span></label>
-            <input type="text" name="return_date_status" id="modal_return_date_status_input_val" class="form-control persian-date-picker" placeholder="YYYY-MM-DD">
-        </div></div>
-    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-dismiss="modal">لغو</button><button type="submit" name="update_booking_status" class="btn btn-primary">ذخیره وضعیت</button></div></form></div></div></div>
+                $item_id_booked = $old_booking_data['ItemID'];
+                $quantity_booked = $old_booking_data['QuantityRequested'];
+                $old_status_booked = $old_booking_data['Status'];
 
-<link rel="stylesheet" href="https://unpkg.com/persian-datepicker@latest/dist/css/persian-datepicker.min.css"/>
-<script src="https://unpkg.com/persian-datepicker@latest/dist/js/persian-datepicker.min.js"></script>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    if (typeof $ !== 'undefined' && $.fn.modal) {
-        $('#statusModal').on('show.bs.modal', function (event) {
-            var button = $(event.relatedTarget); var bookingId = button.data('bookingid'); var currentStatus = button.data('currentstatus');
-            var itemName = button.data('itemname'); var userName = button.data('username'); var returnDate = button.data('returndate');
-            var modal = $(this); modal.find('#modal_booking_id_status_val').val(bookingId); modal.find('#modal_new_status_select_val').val(currentStatus);
-            modal.find('#modal_item_name_status_disp_val').text(itemName); modal.find('#modal_user_name_status_disp_val').text(userName);
-            var returnDateGroup = document.getElementById('return_date_group_modal_val');
-            var returnDateInput = modal.find('#modal_return_date_status_input_val');
-            returnDateGroup.style.display = (currentStatus === 'returned' ? 'block' : 'none');
-            returnDateInput.val(returnDate || '');
+                // QuantityAvailable Adjustment Logic
+                if ($new_status_rb_update === 'picked_up' && $old_status_booked !== 'picked_up') {
+                    // Item picked up, decrement available quantity
+                    $stmt_qty_dec = $conn->prepare("UPDATE ParvareshiRentalItems SET QuantityAvailable = QuantityAvailable - ? WHERE ItemID = ? AND QuantityAvailable >= ?");
+                    if(!$stmt_qty_dec) throw new Exception("خطا آماده سازی کسر موجودی: ".$conn->error);
+                    $stmt_qty_dec->bind_param("iii", $quantity_booked, $item_id_booked, $quantity_booked);
+                    if(!$stmt_qty_dec->execute()) throw new Exception("خطا در کسر موجودی: ".$stmt_qty_dec->error);
+                    if($stmt_qty_dec->affected_rows === 0 && $new_status_rb_update === 'picked_up') {
+                        // This means not enough quantity was available, this check should ideally happen before 'approved'
+                        // For now, we'll throw an error if it happens at 'picked_up' stage.
+                         throw new Exception("موجودی قلم کافی نیست. تعداد درخواستی: $quantity_booked");
+                    }
+                    $stmt_qty_dec->close();
+                } elseif ($new_status_rb_update === 'returned' && $old_status_booked === 'picked_up') {
+                    // Item returned, increment available quantity
+                    $stmt_qty_inc = $conn->prepare("UPDATE ParvareshiRentalItems SET QuantityAvailable = QuantityAvailable + ? WHERE ItemID = ?");
+                     if(!$stmt_qty_inc) throw new Exception("خطا آماده سازی افزایش موجودی: ".$conn->error);
+                    $stmt_qty_inc->bind_param("ii", $quantity_booked, $item_id_booked);
+                    if(!$stmt_qty_inc->execute()) throw new Exception("خطا در افزایش موجودی: ".$stmt_qty_inc->error);
+                    $stmt_qty_inc->close();
+                } elseif (in_array($new_status_rb_update, ['rejected', 'cancelled_by_user', 'cancelled_by_admin']) && $old_status_booked === 'picked_up'){
+                    // If a picked-up item is then rejected/cancelled (unlikely flow, but handle), it means it was returned.
+                     $stmt_qty_inc_cancel = $conn->prepare("UPDATE ParvareshiRentalItems SET QuantityAvailable = QuantityAvailable + ? WHERE ItemID = ?");
+                     if(!$stmt_qty_inc_cancel) throw new Exception("خطا آماده سازی افزایش موجودی (لغو): ".$conn->error);
+                    $stmt_qty_inc_cancel->bind_param("ii", $quantity_booked, $item_id_booked);
+                    if(!$stmt_qty_inc_cancel->execute()) throw new Exception("خطا در افزایش موجودی (لغو): ".$stmt_qty_inc_cancel->error);
+                    $stmt_qty_inc_cancel->close();
+                }
 
-            // Ensure datepicker is initialized or re-initialized for the modal input
-            // This is a common issue with datepickers in modals.
-            if(returnDateInput.length > 0 && !returnDateInput.hasClass('pwt-uid')) {
-                 new persianDatepicker(returnDateInput[0], { format: 'YYYY-MM-DD', autoClose: true, observer:true, calendar:{persian:{locale:'fa'}}});
-            } else if (returnDateInput.length > 0 && returnDateInput.hasClass('pwt-uid')){
-                // If already initialized, might need to update its value or refresh it if library supports
+
+                $stmt_update_rb_status_page = $conn->prepare("UPDATE ParvareshiRentalBookings SET Status = ?, AdminNotes = ?, ProcessedAt = NOW(), ApprovedByUserID = ? WHERE BookingID = ?");
+                if(!$stmt_update_rb_status_page) throw new Exception("خطای آماده سازی بروزرسانی وضعیت: ".$conn->error);
+
+                $current_admin_id_rb_status_page = get_current_user_id();
+                $stmt_update_rb_status_page->bind_param("ssii", $new_status_rb_update, $admin_notes_rb_update, $current_admin_id_rb_status_page, $booking_id_to_update_status);
+                if(!$stmt_update_rb_status_page->execute()) throw new Exception("خطا در بروزرسانی وضعیت رزرو: ".$stmt_update_rb_status_page->error);
+
+                $stmt_update_rb_status_page->close();
+                $conn->commit();
+                $_SESSION['action_success_parvareshi'] = "وضعیت رزرو بروزرسانی شد.";
+                // TODO: Notify user about status change
+            } catch (Exception $e){
+                $conn->rollback();
+                $_SESSION['action_error_parvareshi'] = $e->getMessage();
             }
-        });
+        } else {
+            $_SESSION['action_error_parvareshi'] = "اطلاعات نامعتبر برای بروزرسانی وضعیت.";
+        }
+        header("Location: rental_bookings.php?action=view&booking_id=" . $booking_id_to_update_status);
+        exit;
     }
-    document.querySelectorAll('.alert .close').forEach(function(button){button.addEventListener('click', function(event){event.target.closest('.alert').style.display = 'none';});});
-});
-</script>
-<style>.rental-bookings-table td, .rental-bookings-table th {font-size:0.85rem;} .badge.p-2{padding:0.4em 0.6em!important; font-size:0.8em!important;} .status-row-requested td { background-color: #fff8e1 !important; } .status-row-approved td { background-color: #e3f2fd !important; } .status-row-rented td { background-color: #e8eaf6 !important; }</style>
+}
+
+
+if ($conn) {
+    if ($action_rb_page === 'list') {
+        $page_title_rb_page_display = "لیست رزروهای کرایه‌چی";
+        $filter_rb_status_list = sanitize_input($_GET['filter_status'] ?? '');
+        $filter_rb_item_list = isset($_GET['filter_item_id']) ? (int)$_GET['filter_item_id'] : null;
+        $filter_rb_user_list = isset($_GET['filter_user_id']) ? (int)$_GET['filter_user_id'] : null;
+
+
+        $sql_list_rb_page = "SELECT prb.BookingID, prb.RequestDate, prb.BookingDateStart, prb.BookingDateEnd, prb.Status, prb.QuantityRequested,
+                               pri.ItemName, u.Username as RequesterUsername, c.ClassName
+                        FROM ParvareshiRentalBookings prb
+                        JOIN ParvareshiRentalItems pri ON prb.ItemID = pri.ItemID
+                        JOIN Users u ON prb.UserID = u.UserID
+                        LEFT JOIN Classes c ON prb.ClassID = c.ClassID
+                        WHERE 1=1 ";
+        $params_list_rb_page = []; $types_list_rb_page = "";
+        if(!empty($filter_rb_status_list) && array_key_exists($filter_rb_status_list, $booking_statuses_rb_map_display)){ $sql_list_rb_page .= " AND prb.Status = ?"; $params_list_rb_page[] = $filter_rb_status_list; $types_list_rb_page .= "s";}
+        if($filter_rb_item_list){ $sql_list_rb_page .= " AND prb.ItemID = ?"; $params_list_rb_page[] = $filter_rb_item_list; $types_list_rb_page .= "i";}
+        if($filter_rb_user_list){ $sql_list_rb_page .= " AND prb.UserID = ?"; $params_list_rb_page[] = $filter_rb_user_list; $types_list_rb_page .= "i";}
+
+        $sql_list_rb_page .= " ORDER BY prb.RequestDate DESC";
+
+        $stmt_list_rb_page = $conn->prepare($sql_list_rb_page);
+        if($stmt_list_rb_page){
+            if(!empty($params_list_rb_page)) $stmt_list_rb_page->bind_param($types_list_rb_page, ...$params_list_rb_page);
+            if($stmt_list_rb_page->execute()){ $result_list_rb_page = $stmt_list_rb_page->get_result(); while($row_rb=$result_list_rb_page->fetch_assoc()) $bookings_list_display[]=$row_rb; }
+            else $form_errors_rb_page_display['db_list'] = "خطا بارگذاری لیست: " . $stmt_list_rb_page->error;
+            $stmt_list_rb_page->close();
+        } else $form_errors_rb_page_display['db_list'] = "خطای آماده سازی لیست: " . $conn->error;
+
+    } elseif ($action_rb_page === 'view' && $booking_id_rb_url_param > 0) {
+        $page_title_rb_page_display = "مشاهده جزئیات رزرو";
+        $stmt_details_rb_page = $conn->prepare("SELECT prb.*, pri.ItemName, pri.ImagePath as ItemImagePath,
+                                            u_req.FirstName as ReqFirstName, u_req.LastName as ReqLastName, u_req.Username as ReqUsername,
+                                            u_app.Username as ApproverUsername, c.ClassName, c.AcademicYear
+                                     FROM ParvareshiRentalBookings prb
+                                     JOIN ParvareshiRentalItems pri ON prb.ItemID = pri.ItemID
+                                     JOIN Users u_req ON prb.UserID = u_req.UserID
+                                     LEFT JOIN Users u_app ON prb.ApprovedByUserID = u_app.UserID
+                                     LEFT JOIN Classes c ON prb.ClassID = c.ClassID
+                                     WHERE prb.BookingID = ?");
+        if($stmt_details_rb_page){
+            $stmt_details_rb_page->bind_param("i", $booking_id_rb_url_param); $stmt_details_rb_page->execute();
+            $res_details_rb_page = $stmt_details_rb_page->get_result();
+            if(!($booking_details_rb_display = $res_details_rb_page->fetch_assoc())){
+                $_SESSION['action_error_parvareshi'] = "رزرو یافت نشد."; header("Location: rental_bookings.php"); exit;
+            }
+            $stmt_details_rb_page->close();
+             // Generate CSRF for the status update form on this specific view page
+            $csrf_token_rb_status_update_val = generate_csrf_token($csrf_token_name_rb_status_update . '_' . $booking_details_rb_display['BookingID']);
+        } else $form_errors_rb_page_display['db_load_details'] = "خطا بارگذاری جزئیات: " . $conn->error;
+    }
+} else $form_errors_rb_page_display['db_conn_page'] = "خطا اتصال دیتابیس.";
+?>
+<div class="page-header">
+    <h1><?php echo $page_title_rb_page_display; ?></h1>
+    <div class="page-header-actions">
+        <a href="index.php" class="btn btn-outline-secondary"><em class="bi bi-house-door icon"></em> داشبورد پرورشی</a>
+        <?php if($action_rb_page !== 'list'):?><a href="rental_bookings.php" class="btn btn-secondary ms-2"><em class="bi bi-list-ul icon"></em> لیست رزروها</a><?php endif; ?>
+    </div>
+</div>
+
+<?php if(isset($_SESSION['action_success_parvareshi'])):?><div class="alert alert-success alert-dismissible fade show"><button class="btn-close" data-bs-dismiss="alert"></button><?php echo $_SESSION['action_success_parvareshi']; unset($_SESSION['action_success_parvareshi']);?></div><?php endif;?>
+<?php if(isset($_SESSION['action_error_parvareshi'])):?><div class="alert alert-danger alert-dismissible fade show"><button class="btn-close" data-bs-dismiss="alert"></button><?php echo $_SESSION['action_error_parvareshi']; unset($_SESSION['action_error_parvareshi']);?></div><?php endif;?>
+<?php if(!empty($form_errors_rb_page_display)):?><div class="alert alert-danger alert-dismissible fade show"><strong>خطا:</strong><ul class="mb-0 ps-3"><?php foreach($form_errors_rb_page_display as $e_rb_p=>$e_msg_rb_p):echo "<li>".htmlspecialchars($e_msg_rb_p)."</li>";endforeach;?></ul><button class="btn-close" data-bs-dismiss="alert"></button></div><?php endif;?>
+
+<?php if($action_rb_page === 'list'):
+    $all_rental_items_filter_list = []; $all_users_filter_list = [];
+    if($conn){
+        $res_items_f_list = $conn->query("SELECT ItemID, ItemName FROM ParvareshiRentalItems ORDER BY ItemName"); if($res_items_f_list) while($r_i_f_l=$res_items_f_list->fetch_assoc()) $all_rental_items_filter_list[] = $r_i_f_l;
+        $res_users_f_list = $conn->query("SELECT UserID, Username, FirstName, LastName FROM Users WHERE UserType != 'admin' ORDER BY LastName, FirstName"); if($res_users_f_list) while($u_f_l=$res_users_f_list->fetch_assoc()) $all_users_filter_list[] = $u_f_l;
+    }
+?>
+    <div class="filter-search-bar mb-3"><form method="GET" class="row g-2 align-items-center">
+        <div class="col-md-3"><select name="filter_item_id" class="form-select form-select-sm"><option value="">همه اقلام</option><?php foreach($all_rental_items_filter_list as $item_f_l):?><option value="<?php echo $item_f_l['ItemID'];?>" <?php echo (($filter_rb_item_list??0)==$item_f_l['ItemID'])?'selected':'';?>><?php echo htmlspecialchars($item_f_l['ItemName']);?></option><?php endforeach;?></select></div>
+        <div class="col-md-3"><select name="filter_user_id" class="form-select form-select-sm"><option value="">همه کاربران</option><?php foreach($all_users_filter_list as $user_f_l):?><option value="<?php echo $user_f_l['UserID'];?>" <?php echo (($filter_rb_user_list??0)==$user_f_l['UserID'])?'selected':'';?>><?php echo htmlspecialchars(trim($user_f_l['FirstName'].' '.$user_f_l['LastName']).' (@'.$user_f_l['Username'].')');?></option><?php endforeach;?></select></div>
+        <div class="col-md-3"><select name="filter_status" class="form-select form-select-sm"><option value="">همه وضعیت‌ها</option><?php foreach($booking_statuses_rb_map_display as $sk_rb_f_l=>$sv_rb_f_l):?><option value="<?php echo $sk_rb_f_l;?>" <?php echo (($filter_rb_status_list??'')===$sk_rb_f_l)?'selected':'';?>><?php echo $sv_rb_f_l;?></option><?php endforeach;?></select></div>
+        <div class="col-md-auto"><button type="submit" class="btn btn-info btn-sm">فیلتر</button></div>
+        <?php if(!empty($filter_rb_item_list)||!empty($filter_rb_status_list)||!empty($filter_rb_user_list)):?><div class="col-md-auto"><a href="rental_bookings.php" class="btn btn-secondary btn-sm">پاک کردن</a></div><?php endif;?>
+    </form></div>
+    <div class="card"><div class="card-body">
+    <?php if(empty($bookings_list_display)): ?><p class="text-center text-muted py-3">هیچ رزروی یافت نشد.</p>
+    <?php else: ?><div class="table-responsive"><table class="table table-hover table-sm">
+        <thead class="table-light"><tr><th>#</th><th>قلم</th><th>درخواست‌دهنده</th><th>کلاس</th><th>تاریخ درخواست</th><th>تاریخ رزرو</th><th>تعداد</th><th>وضعیت</th><th class="actions-column">عملیات</th></tr></thead>
+        <tbody><?php foreach($bookings_list_display as $idx_rb_ld => $b_ld): ?>
+            <tr><td><?php echo $idx_rb_ld+1;?></td><td><?php echo htmlspecialchars($b_ld['ItemName']);?></td><td><?php echo htmlspecialchars($b_ld['RequesterUsername']);?></td><td><?php echo htmlspecialchars($b_ld['ClassName']?:'---');?></td><td><?php echo to_jalali($b_ld['RequestDate'],'yy/MM/dd');?></td><td><?php echo to_jalali($b_ld['BookingDateStart'],'yy/MM/dd');?></td><td><?php echo $b_ld['QuantityRequested'];?></td><td><span class="badge bg-<?php echo get_booking_status_badge_class_rb_page($b_ld['Status']);?>"><?php echo $booking_statuses_rb_map_display[$b_ld['Status']]??$b_ld['Status'];?></span></td>
+            <td class="actions-cell"><a href="?action=view&booking_id=<?php echo $b_ld['BookingID'];?>" class="btn btn-sm btn-outline-primary" title="مشاهده و تغییر وضعیت"><em class="bi bi-eye-fill"></em></a></td></tr>
+        <?php endforeach; ?></tbody>
+    </table></div><?php endif; ?>
+    </div></div>
+<?php elseif($action_rb_page === 'view' && $booking_details_rb_display): ?>
+<div class="card">
+    <div class="card-header"><h5 class="mb-0">جزئیات رزرو: <?php echo htmlspecialchars($booking_details_rb_display['ItemName']); ?> (کد: <?php echo $booking_details_rb_display['BookingID']; ?>)</h5></div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-3 text-center mb-3">
+                <img src="<?php echo !empty($booking_details_rb_display['ItemImagePath']) ? get_base_url().htmlspecialchars($booking_details_rb_display['ItemImagePath']) : get_base_url().'assets/images/logo-placeholder.png';?>" alt="<?php echo htmlspecialchars($booking_details_rb_display['ItemName']);?>" class="img-fluid rounded mb-2" style="max-height: 150px; border: 1px solid #ddd;">
+                <h6><?php echo htmlspecialchars($booking_details_rb_display['ItemName']); ?></h6>
+            </div>
+            <div class="col-md-9">
+                <dl class="row gy-2">
+                    <dt class="col-sm-4">درخواست دهنده:</dt><dd class="col-sm-8"><?php echo htmlspecialchars(trim($booking_details_rb_display['ReqFirstName'].' '.$booking_details_rb_display['ReqLastName'])); ?> <small class="text-muted">(@<?php echo htmlspecialchars($booking_details_rb_display['ReqUsername']); ?>)</small></dd>
+                    <dt class="col-sm-4">کلاس (در صورت ارتباط):</dt><dd class="col-sm-8"><?php echo htmlspecialchars($booking_details_rb_display['ClassName']? ($booking_details_rb_display['ClassName'].' ('.$booking_details_rb_display['AcademicYear'].')') : '---'); ?></dd>
+                    <dt class="col-sm-4">تاریخ ثبت درخواست:</dt><dd class="col-sm-8"><?php echo to_jalali($booking_details_rb_display['RequestDate'],'yyyy/MM/dd HH:mm'); ?></dd>
+                    <dt class="col-sm-4">تاریخ شروع رزرو:</dt><dd class="col-sm-8"><?php echo to_jalali($booking_details_rb_display['BookingDateStart'],'yyyy/MM/dd'); ?></dd>
+                    <dt class="col-sm-4">تاریخ پایان رزرو:</dt><dd class="col-sm-8"><?php echo to_jalali($booking_details_rb_display['BookingDateEnd'],'yyyy/MM/dd'); ?></dd>
+                    <dt class="col-sm-4">تعداد درخواستی:</dt><dd class="col-sm-8"><?php echo $booking_details_rb_display['QuantityRequested']; ?></dd>
+                    <dt class="col-sm-4">وضعیت فعلی:</dt><dd class="col-sm-8"><span class="badge fs-6 bg-<?php echo get_booking_status_badge_class_rb_page($booking_details_rb_display['Status']);?>"><?php echo $booking_statuses_rb_map_display[$booking_details_rb_display['Status']]??$booking_details_rb_display['Status'];?></span></dd>
+                    <dt class="col-sm-4">یادداشت درخواست‌دهنده:</dt><dd class="col-sm-8"><?php echo nl2br(htmlspecialchars($booking_details_rb_display['RequesterNotes']?:'---')); ?></dd>
+                    <?php if($booking_details_rb_display['AdminNotes']):?><dt class="col-sm-4 text-primary">یادداشت ادمین:</dt><dd class="col-sm-8 text-primary"><?php echo nl2br(htmlspecialchars($booking_details_rb_display['AdminNotes']));?></dd><?php endif;?>
+                    <?php if($booking_details_rb_display['ApprovedByUserID']):?><dt class="col-sm-4">بررسی شده توسط:</dt><dd class="col-sm-8"><?php echo htmlspecialchars($booking_details_rb_display['ApproverUsername']?:'---');?> در <?php echo to_jalali($booking_details_rb_display['ProcessedAt'],'yy/MM/dd HH:mm');?></dd><?php endif;?>
+                </dl>
+            </div>
+        </div>
+        <hr>
+        <h6>تغییر وضعیت رزرو:</h6>
+        <form method="POST" action="rental_bookings.php?action=view&booking_id=<?php echo $booking_details_rb_display['BookingID']; ?>" class="row g-3 align-items-end">
+            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_rb_status_update_val; // This should be specific to this form instance ?>">
+            <input type="hidden" name="booking_id" value="<?php echo $booking_details_rb_display['BookingID']; ?>">
+            <div class="col-md-4"><label for="new_status_rb_update_page" class="form-label">وضعیت جدید:</label><select name="new_status" id="new_status_rb_update_page" class="form-select"><?php foreach($booking_statuses_rb_map_display as $sk_upd_p=>$sv_upd_p):?><option value="<?php echo $sk_upd_p;?>" <?php echo ($booking_details_rb_display['Status']===$sk_upd_p)?'selected':'';?>><?php echo $sv_upd_p;?></option><?php endforeach;?></select></div>
+            <div class="col-md-6"><label for="admin_notes_rb_update_page" class="form-label">یادداشت ادمین:</label><input type="text" name="admin_notes" id="admin_notes_rb_update_page" class="form-control" placeholder="اختیاری (مثلا دلیل رد یا شرایط تحویل)"></div>
+            <div class="col-md-2"><button type="submit" name="update_booking_status" class="btn btn-warning w-100">بروزرسانی</button></div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>
