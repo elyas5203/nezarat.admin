@@ -1,106 +1,130 @@
 <?php
-require_once __DIR__ . '/../../../includes/config/db_config.php'; // Adjusted path
-require_once __DIR__ . '/../../../includes/functions/helper_functions.php'; // For session start and CSRF
+require_once __DIR__ . '/../../../includes/config/db_config.php'; // Corrected path
+require_once __DIR__ . '/../../../includes/functions/helper_functions.php'; // Corrected path
 
 if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
-// Check if admin is logged in
+// Ensure admin is logged in
 if (!is_admin_logged_in()) {
-    header("Location: " . '/my_site/admin/auth/login.php'); // Adjust to your login path
+    $_SESSION['user_action_error'] = 'برای انجام این عملیات باید به عنوان ادمین وارد شده باشید.';
+    // Adjusted redirect path based on the new location of delete_user.php
+    header("Location: " . get_base_url() . "admin/auth/login.php");
     exit;
 }
 
-$user_id_to_delete = null;
-$error_message = '';
-$success_message = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user_id_to_delete = isset($_POST['user_id']) ? (int)$_POST['user_id'] : 0;
+    $submitted_csrf_token = $_POST['csrf_token'] ?? '';
 
-// CSRF Token Verification
-$user_id_for_token = $_GET['user_id'] ?? 'invalid_id'; // Get user_id for token name
-$csrf_token_from_link = $_GET['csrf_token'] ?? '';
+    // The CSRF token for deletion is generated on the index.php page with name 'delete_user'
+    if (!verify_csrf_token($submitted_csrf_token, 'delete_user')) {
+        $_SESSION['user_action_error'] = 'خطای امنیتی CSRF. عملیات حذف ناموفق بود.';
+        header("Location: ../index.php");
+        exit;
+    }
+    // Regenerate the 'delete_user' token to prevent replay attacks if the user goes back and tries again
+    // This might be better handled by redirecting and ensuring the form always has a fresh token.
+    // For now, let's regenerate it for the session.
+    regenerate_csrf_token('delete_user');
 
-if (!verify_csrf_token($csrf_token_from_link, 'delete_user_form_' . $user_id_for_token)) {
-    header("Location: ../index.php?action_status=error&message=" . urlencode("خطای CSRF! درخواست حذف نامعتبر یا توکن منقضی شده."));
-    exit;
-}
-// Regenerate token for this specific action to prevent reuse on replay, though redirect happens immediately
-regenerate_csrf_token('delete_user_form_' . $user_id_for_token);
 
+    if ($user_id_to_delete <= 0 && $user_id_to_delete !== 0) { // Allow UserID 0 if it's a special system user (though usually not deletable)
+        $_SESSION['user_action_error'] = 'شناسه کاربر برای حذف نامعتبر است.';
+        header("Location: ../index.php");
+        exit;
+    }
 
-if (isset($_GET['user_id']) && is_numeric($_GET['user_id'])) {
-    $user_id_to_delete = (int)$_GET['user_id'];
+    // Fetch the username to prevent deleting 'admin'
+    // Also ensure $conn is available
+    if (!$conn) {
+        $_SESSION['user_action_error'] = 'خطا در اتصال به پایگاه داده.';
+        header("Location: ../index.php");
+        exit;
+    }
 
-    if ($user_id_to_delete === ($_SESSION['admin_user_id'] ?? null)) {
-        $error_message = "امکان حذف حساب کاربری ادمین اصلی که با آن وارد شده‌اید، وجود ندارد.";
+    $stmt_get_username = $conn->prepare("SELECT Username FROM Users WHERE UserID = ?");
+    if (!$stmt_get_username) {
+        $_SESSION['user_action_error'] = 'خطا در آماده سازی کوئری (get username): ' . $conn->error;
+        header("Location: ../index.php");
+        exit;
+    }
+    $stmt_get_username->bind_param("i", $user_id_to_delete);
+    $stmt_get_username->execute();
+    $result_username = $stmt_get_username->get_result();
+
+    if ($user_to_delete_data = $result_username->fetch_assoc()) {
+        if (strtolower($user_to_delete_data['Username']) === 'admin') {
+            $_SESSION['user_action_error'] = 'کاربر ادمین اصلی قابل حذف نیست.';
+            $stmt_get_username->close();
+            header("Location: ../index.php");
+            exit;
+        }
     } else {
-        $stmt_check = $conn->prepare("SELECT Username FROM Users WHERE UserID = ?");
-        if ($stmt_check) {
-            $stmt_check->bind_param("i", $user_id_to_delete);
-            $stmt_check->execute();
-            $result_check = $stmt_check->get_result();
+        // If UserID 0 was passed and no user 0 exists, this will trigger.
+        // Or if a non-existent UserID was passed.
+        $_SESSION['user_action_error'] = 'کاربر مورد نظر برای حذف یافت نشد (ID: ' . $user_id_to_delete . ').';
+        $stmt_get_username->close();
+        header("Location: ../index.php");
+        exit;
+    }
+    $stmt_get_username->close();
 
-            if ($result_check->num_rows === 1) {
-                $conn->begin_transaction();
-                try {
-                    // Delete from UserRoles
-                    $stmt_delete_roles = $conn->prepare("DELETE FROM UserRoles WHERE UserID = ?");
-                    if (!$stmt_delete_roles) throw new Exception("خطا آماده سازی حذف نقش‌ها: " . $conn->error);
-                    $stmt_delete_roles->bind_param("i", $user_id_to_delete);
-                    if (!$stmt_delete_roles->execute()) throw new Exception("خطا حذف نقش‌ها: " . $stmt_delete_roles->error);
-                    $stmt_delete_roles->close();
+    $conn->begin_transaction();
+    try {
+        // 1. Delete from UserRoles
+        $stmt_delete_roles = $conn->prepare("DELETE FROM UserRoles WHERE UserID = ?");
+        if (!$stmt_delete_roles) throw new Exception("خطا در آماده سازی حذف نقش‌های کاربر: " . $conn->error);
+        $stmt_delete_roles->bind_param("i", $user_id_to_delete);
+        if (!$stmt_delete_roles->execute()) throw new Exception("خطا در حذف نقش‌های کاربر: " . $stmt_delete_roles->error);
+        $stmt_delete_roles->close();
 
-                    // Add deletions or updates for other related tables here if foreign keys don't handle it
-                    // Example: Set AssignedToUserID to NULL in Tasks
-                    // $stmt_update_tasks = $conn->prepare("UPDATE Tasks SET AssignedToUserID = NULL WHERE AssignedToUserID = ?");
-                    // if ($stmt_update_tasks) {
-                    //    $stmt_update_tasks->bind_param("i", $user_id_to_delete);
-                    //    $stmt_update_tasks->execute();
-                    //    $stmt_update_tasks->close();
-                    // } else { throw new Exception("خطا در به‌روزرسانی وظایف کاربر.");}
-                    // Similar for FormSubmissions, Files etc. or ensure DB constraints (ON DELETE SET NULL / CASCADE)
-
-                    // Delete from Users table
-                    $stmt_delete_user = $conn->prepare("DELETE FROM Users WHERE UserID = ?");
-                    if (!$stmt_delete_user) throw new Exception("خطا آماده سازی حذف کاربر: " . $conn->error);
-                    $stmt_delete_user->bind_param("i", $user_id_to_delete);
-
-                    if ($stmt_delete_user->execute()) {
-                        if ($stmt_delete_user->affected_rows > 0) {
-                            $conn->commit();
-                            $success_message = "کاربر با موفقیت حذف شد.";
-                        } else {
-                            throw new Exception("کاربر برای حذف یافت نشد (پس از بررسی اولیه).");
-                        }
-                    } else {
-                        throw new Exception("خطا در حذف کاربر: " . $stmt_delete_user->error);
-                    }
-                    $stmt_delete_user->close();
-
-                } catch (Exception $e) {
-                    $conn->rollback();
-                    $error_message = "خطای پایگاه داده: " . $e->getMessage();
-                     // Log detailed error: error_log($e->getMessage());
-                }
-            } else {
-                $error_message = "کاربری با این شناسه یافت نشد.";
-            }
-            $stmt_check->close();
+        // 2. Consider other dependencies: Notifications, FormSubmissions, etc.
+        // Example: Delete notifications for this user
+        $stmt_delete_notifs = $conn->prepare("DELETE FROM Notifications WHERE UserID = ?");
+        if ($stmt_delete_notifs) {
+            $stmt_delete_notifs->bind_param("i", $user_id_to_delete);
+            $stmt_delete_notifs->execute(); // Errors here are not critical for user deletion itself, but should be logged
+            $stmt_delete_notifs->close();
         } else {
-            $error_message = "خطا در بررسی وجود کاربر: " . $conn->error;
+            error_log("Failed to prepare statement for deleting notifications for UserID: $user_id_to_delete. Error: " . $conn->error);
+        }
+
+        // Add more dependency cleanups here if necessary (e.g., anonymize form submissions, reassign tasks)
+        // For now, we'll proceed to delete the user. If foreign keys are restrictive, this will fail.
+
+        // 3. Delete from Users
+        $stmt_delete_user = $conn->prepare("DELETE FROM Users WHERE UserID = ?");
+        if (!$stmt_delete_user) throw new Exception("خطا در آماده سازی حذف کاربر: " . $conn->error);
+        $stmt_delete_user->bind_param("i", $user_id_to_delete);
+
+        if ($stmt_delete_user->execute()) {
+            if ($stmt_delete_user->affected_rows > 0) {
+                $conn->commit();
+                $_SESSION['user_action_success'] = 'کاربر با شناسه ' . $user_id_to_delete . ' با موفقیت حذف شد.';
+            } else {
+                $conn->rollback(); // Rollback if user was not actually deleted (e.g., already gone)
+                $_SESSION['user_action_error'] = 'کاربر مورد نظر برای حذف یافت نشد یا قبلاً حذف شده است (affected_rows = 0).';
+            }
+        } else {
+            throw new Exception("خطا در اجرای حذف کاربر: " . $stmt_delete_user->error);
+        }
+        $stmt_delete_user->close();
+
+    } catch (Exception $e) {
+        $conn->rollback();
+        if ($conn->errno == 1451) {
+             $_SESSION['user_action_error'] = 'امکان حذف این کاربر وجود ندارد زیرا اطلاعات وابسته (مانند فرم‌های ثبت‌شده یا وظایف) در سیستم موجود است. ابتدا اطلاعات وابسته را حذف یا ویرایش کنید.';
+        } else {
+            $_SESSION['user_action_error'] = 'خطای پایگاه داده هنگام حذف کاربر: ' . $e->getMessage();
         }
     }
+
 } else {
-    $error_message = "شناسه کاربر برای حذف نامعتبر یا ارسال نشده است.";
+    $_SESSION['user_action_error'] = 'درخواست نامعتبر برای حذف کاربر (متد غیر POST).';
 }
 
-$redirect_url = "../index.php?"; // Go back to the users list
-if (!empty($success_message)) {
-    $redirect_url .= "action_status=success_delete&message=" . urlencode($success_message);
-} else {
-    $redirect_url .= "action_status=error&message=" . urlencode($error_message ?: "خطای نامشخص در عملیات حذف.");
-}
-
-header("Location: " . $redirect_url);
+header("Location: ../index.php");
 exit;
 ?>

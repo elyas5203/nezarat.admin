@@ -1,153 +1,129 @@
 <?php
-// user/tickets/index.php
-require_once __DIR__ . '/../includes/header.php'; // Handles session, db, auth
+require_once __DIR__ . '/../includes/header.php';
 
-$user_id = get_current_user_id();
-if (!$user_id) { // Should not happen if header.php enforces login
-    $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'برای دسترسی به این بخش باید وارد شوید.'];
-    header("Location: " . $user_base_url . "/auth/login.php"); // $user_base_url from header.php
+$user_id_ti = get_current_user_id(); // Renamed to avoid conflict
+if (!$user_id_ti) {
+    $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'برای مشاهده تیکت‌ها باید وارد شوید.'];
+    header("Location: " . ($user_base_url ?? '/my_site/user') . "/auth/login.php");
     exit;
 }
 
-// Fetch tickets created by the current user
-// Also fetch the name of the user who last replied (if not the ticket creator)
-$stmt_tickets = $conn->prepare("
-    SELECT
-        t.TicketID, t.Subject, t.Status, t.Priority, t.CreatedAt, t.UpdatedAt,
-        d.DepartmentName AS AssignedDepartmentName,
-        (SELECT COUNT(tr.ReplyID)
-         FROM TicketReplies tr
-         WHERE tr.TicketID = t.TicketID AND tr.UserID != ? AND tr.IsReadByCreator = FALSE) AS UnreadRepliesByOthers,
-        lr.UserID AS LastReplierUserID,
-        CONCAT(u_lr.FirstName, ' ', u_lr.LastName) as LastReplierName
-    FROM Tickets t
-    LEFT JOIN Departments d ON t.AssignedToDepartmentID = d.DepartmentID
-    LEFT JOIN (
-        SELECT TicketID, UserID, MAX(CreatedAt) as MaxDate
-        FROM TicketReplies
-        GROUP BY TicketID, UserID
-        ORDER BY MaxDate DESC
-    ) lr_sub ON lr_sub.TicketID = t.TicketID
-    LEFT JOIN TicketReplies lr ON lr.TicketID = lr_sub.TicketID AND lr.CreatedAt = lr_sub.MaxDate
-    LEFT JOIN Users u_lr ON lr.UserID = u_lr.UserID
-    WHERE t.CreatedByUserID = ?
-    GROUP BY t.TicketID, t.Subject, t.Status, t.Priority, t.CreatedAt, t.UpdatedAt, AssignedDepartmentName, LastReplierUserID, LastReplierName
-    ORDER BY UnreadRepliesByOthers DESC, t.UpdatedAt DESC, t.CreatedAt DESC
-");
+$page_title_ut_index_page = "تیکت‌های پشتیبانی من";
+$tickets_list_user_display = [];
+$errors_ut_index_page = [];
+
+// Ticket Statuses and Badges
+$ticket_statuses_user_map_display = [
+    'open' => ['label' => 'باز', 'badge' => 'primary'],
+    'pending_admin_reply' => ['label' => 'در انتظار پاسخ ادمین', 'badge' => 'info text-dark'],
+    'pending_user_reply' => ['label' => 'در انتظار پاسخ شما', 'badge' => 'warning text-dark'],
+    'on_hold' => ['label' => 'معلق', 'badge' => 'secondary'],
+    'closed' => ['label' => 'بسته شده', 'badge' => 'success'],
+    'resolved' => ['label' => 'حل شده', 'badge' => 'success'],
+];
+$priority_display_map_user_page = ['low' => 'کم', 'medium' => 'متوسط', 'high' => 'زیاد', 'urgent' => 'فوری'];
 
 
-$tickets = [];
-if ($stmt_tickets) {
-    $stmt_tickets->bind_param("ii", $user_id, $user_id);
-    $stmt_tickets->execute();
-    $result = $stmt_tickets->get_result();
-    while ($row = $result->fetch_assoc()) {
-        $tickets[] = $row;
+if($conn){
+    $stmt_tickets_page = $conn->prepare(
+        "SELECT t.TicketID, t.Subject, t.Status, t.Priority, t.CreatedAt, t.LastUpdatedAt,
+                (SELECT COUNT(tr.ReplyID) FROM TicketReplies tr WHERE tr.TicketID = t.TicketID AND tr.IsReadByCreator = FALSE AND tr.IsAdminReply = TRUE) as UnreadAdminRepliesCount
+         FROM Tickets t
+         WHERE t.CreatedByUserID = ?
+         ORDER BY t.LastUpdatedAt DESC"
+    );
+    if($stmt_tickets_page){
+        $stmt_tickets_page->bind_param("i", $user_id_ti);
+        if($stmt_tickets_page->execute()){
+            $result_tickets_page = $stmt_tickets_page->get_result();
+            while($row_ti = $result_tickets_page->fetch_assoc()){
+                $tickets_list_user_display[] = $row_ti;
+            }
+        } else {
+            $errors_ut_index_page['db_fetch'] = "خطا در بارگذاری لیست تیکت‌ها: " . $stmt_tickets_page->error;
+        }
+        $stmt_tickets_page->close();
+    } else {
+        $errors_ut_index_page['db_prepare'] = "خطا در آماده سازی کوئری تیکت‌ها: " . $conn->error;
     }
-    $stmt_tickets->close();
 } else {
-    $_SESSION['flash_message'] = ['type' => 'danger', 'text' => 'خطا در بارگذاری تیکت‌ها: ' . $conn->error];
+    $errors_ut_index_page['db_conn'] = "خطا در اتصال به پایگاه داده.";
 }
-
-$status_persian = ['open' => 'باز', 'in_progress' => 'در حال بررسی', 'resolved' => 'حل شده', 'closed' => 'بسته شده', 'urgent' => 'فوری'];
-$priority_persian = ['low' => 'کم', 'medium' => 'متوسط', 'high' => 'زیاد', 'urgent' => 'فوری'];
-$status_badge_class = ['open' => 'info', 'in_progress' => 'warning', 'resolved' => 'success', 'closed' => 'secondary', 'urgent' => 'danger'];
-$priority_badge_class = ['low' => 'info', 'medium' => 'warning', 'high' => 'orange', 'urgent' => 'danger'];
-
-
 ?>
 <div class="page-header">
-    <h1>تیکت‌های پشتیبانی من</h1>
+    <h1><?php echo $page_title_ut_index_page; ?></h1>
     <div class="page-header-actions">
-        <a href="create.php" class="btn btn-primary-user btn-lg">
-            <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            <span>ایجاد تیکت جدید</span>
+        <a href="create.php" class="btn btn-primary-user btn-lg"> <!-- Made button larger -->
+            <em class="bi bi-plus-circle-fill icon me-2"></em> ایجاد تیکت جدید
         </a>
     </div>
 </div>
 
-<?php
-// Display flash messages
-if (isset($_SESSION['flash_message'])) {
-    $flash = $_SESSION['flash_message'];
-    echo "<div class='alert alert-{$flash['type']} alert-dismissible fade show' role='alert'>{$flash['text']}
-          <button type='button' class='close' data-dismiss='alert' aria-label='Close' style='background:none; border:none; font-size:1.5rem; position:absolute; top:0; left:0; padding: 0.75rem 1.25rem;'><span aria-hidden='true'>&times;</span></button></div>";
-    unset($_SESSION['flash_message']);
-}
-// For redirects from create/view
-if (isset($_GET['action_status'])): ?>
-    <div class="alert <?php echo ($_GET['action_status'] == 'success') ? 'alert-success' : 'alert-danger'; ?> alert-dismissible fade show" role="alert">
-        <?php echo htmlspecialchars(urldecode($_GET['message'] ?? '')); ?>
-        <button type="button" class="close" data-dismiss="alert" aria-label="Close" style="/* same style */"><span aria-hidden='true'>&times;</span></button>
+<?php if (isset($_SESSION['flash_message'])): $flash_ti = $_SESSION['flash_message']; ?>
+    <div class="alert alert-<?php echo $flash_ti['type']; ?> alert-dismissible fade show" role="alert">
+        <?php echo htmlspecialchars($flash_ti['text']); unset($_SESSION['flash_message']); ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
 <?php endif; ?>
-<script> /* JS for alert dismissal */
-    document.querySelectorAll('.alert .close').forEach(function(button) {
-        button.addEventListener('click', function(event) {
-            let alertNode = event.target.closest('.alert');
-            if(alertNode) {
-                if (typeof(bootstrap) !== 'undefined' && bootstrap.Alert && bootstrap.Alert.getInstance(alertNode)) { bootstrap.Alert.getInstance(alertNode).close(); }
-                else { alertNode.style.display = 'none'; }
-            }
-        });
-    });
-    setTimeout(function() {
-        document.querySelectorAll('.alert-dismissible.show').forEach(function(alert){
-             if (typeof(bootstrap) !== 'undefined' && bootstrap.Alert && bootstrap.Alert.getInstance(alert)) { bootstrap.Alert.getInstance(alert).close(); }
-             else { alert.style.display = 'none'; }
-        });
-    }, 7000);
-</script>
+<?php if (!empty($errors_ut_index_page)): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <p class="mb-0"><strong>خطا:</strong></p>
+        <ul class="mb-0 ps-3"><?php foreach ($errors_ut_index_page as $error_msg_ti): ?><li><?php echo htmlspecialchars($error_msg_ti); ?></li><?php endforeach; ?></ul>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+<?php endif; ?>
 
 <div class="card shadow-sm">
-    <div class="card-header">
-        <span class="card-title-text">لیست تیکت‌های شما</span>
+    <div class="card-header bg-light">
+        <h5 class="mb-0">لیست تیکت‌های شما</h5>
     </div>
-    <div class="card-body">
-        <?php if (!empty($tickets)): ?>
+    <div class="card-body p-0"> <!-- Remove padding for full-width table -->
+        <?php if (empty($tickets_list_user_display)): ?>
+            <div class="text-center py-5">
+                <em class="bi bi-ticket-detailed fs-1 text-muted mb-3 d-block"></em>
+                <p class="mt-3 lead">شما هنوز هیچ تیکتی ایجاد نکرده‌اید.</p>
+                <a href="create.php" class="btn btn-lg btn-primary-user mt-2 px-4">ایجاد اولین تیکت</a>
+            </div>
+        <?php else: ?>
             <div class="table-responsive">
-                <table class="table table-hover table-striped tickets-table">
-                    <thead>
+                <table class="table table-hover table-striped mb-0"> <!-- mb-0 to remove bottom margin -->
+                    <thead class="table-light">
                         <tr>
-                            <th>#</th>
-                            <th>شناسه</th>
-                            <th>عنوان</th>
-                            <th>بخش مربوطه</th>
-                            <th>وضعیت</th>
-                            <th>اولویت</th>
-                            <th>آخرین بروزرسانی</th>
-                            <th>آخرین پاسخ از</th>
-                            <th class="actions-column">عملیات</th>
+                            <th scope="col">#</th>
+                            <th scope="col">شناسه</th>
+                            <th scope="col">موضوع</th>
+                            <th scope="col">اولویت</th>
+                            <th scope="col">وضعیت</th>
+                            <th scope="col">آخرین بروزرسانی</th>
+                            <th scope="col" class="text-center">پاسخ جدید</th>
+                            <th scope="col" class="text-center">عملیات</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php $row_num = 1; foreach ($tickets as $ticket): ?>
-                            <tr class="<?php echo ($ticket['UnreadRepliesByOthers'] > 0) ? 'ticket-unread' : ''; ?>">
-                                <td><?php echo $row_num++; ?></td>
-                                <td><code>#<?php echo $ticket['TicketID']; ?></code></td>
+                        <?php foreach($tickets_list_user_display as $index_ti => $ticket_item): ?>
+                            <tr class="<?php echo ($ticket_item['UnreadAdminRepliesCount'] > 0) ? 'table-info fw-bold' : ''; ?>">
+                                <td><?php echo $index_ti + 1; ?></td>
+                                <td>#<?php echo $ticket_item['TicketID']; ?></td>
                                 <td>
-                                    <a href="view.php?ticket_id=<?php echo $ticket['TicketID']; ?>" class="ticket-subject">
-                                        <?php echo htmlspecialchars($ticket['Subject']); ?>
-                                        <?php if ($ticket['UnreadRepliesByOthers'] > 0): ?>
-                                            <span class="badge badge-danger ml-2"><?php echo $ticket['UnreadRepliesByOthers']; ?></span>
-                                        <?php endif; ?>
+                                    <a href="view.php?ticket_id=<?php echo $ticket_item['TicketID']; ?>" class="text-decoration-none">
+                                        <?php echo htmlspecialchars($ticket_item['Subject']); ?>
                                     </a>
                                 </td>
-                                <td><?php echo htmlspecialchars($ticket['AssignedDepartmentName'] ?? 'پشتیبانی'); ?></td>
-                                <td><span class="badge badge-<?php echo $status_badge_class[$ticket['Status']] ?? 'secondary'; ?>"><?php echo $status_persian[$ticket['Status']] ?? htmlspecialchars($ticket['Status']); ?></span></td>
-                                <td><span class="badge badge-<?php echo $priority_badge_class[$ticket['Priority']] ?? 'secondary'; ?>"><?php echo $priority_persian[$ticket['Priority']] ?? htmlspecialchars($ticket['Priority']); ?></span></td>
-                                <td class="small text-muted"><?php echo to_jalali($ticket['UpdatedAt'], 'yyyy/MM/dd HH:mm'); ?></td>
-                                <td class="small text-muted">
-                                    <?php
-                                        if ($ticket['LastReplierUserID'] == $user_id) echo 'شما';
-                                        elseif (!empty($ticket['LastReplierName'])) echo htmlspecialchars($ticket['LastReplierName']);
-                                        else echo '-';
-                                    ?>
+                                <td><?php echo $priority_display_map_user_page[$ticket_item['Priority']] ?? htmlspecialchars($ticket_item['Priority']); ?></td>
+                                <td>
+                                    <span class="badge fs-xs bg-<?php echo $ticket_statuses_user_map_display[$ticket_item['Status']]['badge'] ?? 'secondary'; ?>">
+                                        <?php echo $ticket_statuses_user_map_display[$ticket_item['Status']]['label'] ?? htmlspecialchars($ticket_item['Status']); ?>
+                                    </span>
                                 </td>
-                                <td class="actions-cell">
-                                    <a href="view.php?ticket_id=<?php echo $ticket['TicketID']; ?>" class="btn btn-sm btn-info" title="مشاهده و پاسخ">
-                                        <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                                        <span>مشاهده</span>
+                                <td><?php echo to_jalali($ticket_item['LastUpdatedAt'], 'yyyy/MM/dd HH:mm'); ?></td>
+                                <td class="text-center">
+                                    <?php if($ticket_item['UnreadAdminRepliesCount'] > 0): ?>
+                                        <span class="badge bg-danger rounded-pill"><?php echo $ticket_item['UnreadAdminRepliesCount']; ?></span>
+                                    <?php else: echo '---'; endif; ?>
+                                </td>
+                                <td class="text-center">
+                                    <a href="view.php?ticket_id=<?php echo $ticket_item['TicketID']; ?>" class="btn btn-sm btn-outline-primary-user" title="مشاهده و پاسخ به تیکت">
+                                        <em class="bi bi-chat-dots-fill"></em> مشاهده
                                     </a>
                                 </td>
                             </tr>
@@ -155,20 +131,11 @@ if (isset($_GET['action_status'])): ?>
                     </tbody>
                 </table>
             </div>
-        <?php else: ?>
-            <div class="alert alert-info mb-0">شما تاکنون هیچ تیکتی ایجاد نکرده‌اید. برای طرح سوال یا مشکل جدید، <a href="create.php" class="alert-link">یک تیکت جدید ایجاد کنید</a>.</div>
+            <!-- TODO: Pagination if many tickets -->
         <?php endif; ?>
     </div>
 </div>
-<style>
-    .tickets-table th, .tickets-table td { vertical-align: middle; font-size: 0.9rem; }
-    .ticket-subject { font-weight: 500; color: var(--user-panel-primary-color, #17a2b8); }
-    .ticket-subject:hover { color: var(--user-panel-primary-hover-color, #138496); text-decoration: none; }
-    .ticket-unread { background-color: #fff3cd !important; /* Light yellow for unread */ }
-    .ticket-unread td a.ticket-subject { font-weight: bold; }
-    .badge { padding: 0.4em 0.6em; font-size: 0.75rem;}
-    .badge-orange { background-color: #fd7e14; color: white;} /* Custom orange badge */
-</style>
+<style>.fs-xs { font-size: .78rem; }</style>
 <?php
 require_once __DIR__ . '/../includes/footer.php';
 ?>

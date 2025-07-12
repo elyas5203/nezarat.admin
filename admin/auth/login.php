@@ -15,10 +15,16 @@ if (is_admin_logged_in()) {
 $error_message = '';
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $username = sanitize_input($_POST['username']);
-    $password = $_POST['password'];
+    if (!isset($_POST['csrf_token']) || !verify_csrf_token($_POST['csrf_token'], 'admin_login')) {
+        $error_message = "خطای امنیتی CSRF. لطفاً صفحه را رفرش کرده و مجدداً تلاش کنید.";
+    } else {
+        $username = sanitize_input($_POST['username']);
+        $password = $_POST['password'];
 
-    $admin_username_config = "admin";
+        // Regenerate CSRF token after successful verification to prevent reuse for this form instance
+        regenerate_csrf_token('admin_login');
+
+        $admin_username_config = "admin";
     $admin_password_plain_config = "Admin_dabestan_site_110_59";
 
     if ($username === $admin_username_config) {
@@ -109,97 +115,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ورود ادمین - سامانه مدیریت دبستان</title>
-    <link rel="stylesheet" href="../../assets/css/common/reset.css">
-    <link rel="stylesheet" href="../../assets/css/admin/login.css">
+    <link rel="stylesheet" href="<?php echo get_base_url(); ?>assets/css/common/reset.css">
+    <link rel="stylesheet" href="<?php echo get_base_url(); ?>assets/css/admin/login.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100..900&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Vazirmatn', sans-serif;
-            background-color: #f4f7f6;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-        }
-        .login-container {
-            background-color: #fff;
-            padding: 30px 40px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            width: 100%;
-            max-width: 400px;
-            text-align: center;
-        }
-        .login-container h2 {
-            color: #333;
-            margin-bottom: 25px;
-            font-weight: 600;
-        }
-        .login-container label {
-            display: block;
-            text-align: right;
-            margin-bottom: 8px;
-            color: #555;
-            font-weight: 500;
-        }
-        .login-container input[type="text"],
-        .login-container input[type="password"] {
-            width: 100%;
-            padding: 12px;
-            margin-bottom: 20px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            box-sizing: border-box;
-            font-family: 'Vazirmatn', sans-serif;
-            font-size: 1rem;
-        }
-        .login-container input[type="text"]:focus,
-        .login-container input[type="password"]:focus {
-            border-color: #007bff;
-            outline: none;
-            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
-        }
-        .login-container button[type="submit"] {
-            background-color: #007bff;
-            color: white;
-            padding: 12px 20px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 1rem;
-            font-weight: 500;
-            width: 100%;
-            transition: background-color 0.3s ease;
-        }
-        .login-container button[type="submit"]:hover {
-            background-color: #0056b3;
-        }
-        .error-message {
-            color: #dc3545;
-            background-color: #f8d7da;
-            border: 1px solid #f5c6cb;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            font-size: 0.9rem;
-        }
-    </style>
 </head>
 <body>
     <div class="login-container">
         <form method="POST" action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>">
+            <input type="hidden" name="csrf_token" value="<?php echo generate_csrf_token('admin_login'); ?>">
             <h2>ورود ادمین</h2>
             <?php if (!empty($error_message)): ?>
                 <p class="error-message"><?php echo $error_message; ?></p>
             <?php endif; ?>
-            <div>
+            <div class="form-group">
                 <label for="username">نام کاربری:</label>
-                <input type="text" id="username" name="username" value="<?php echo $admin_username_config; ?>" required>
+                <input type="text" id="username" name="username" value="<?php echo htmlspecialchars($admin_username_config); ?>" required>
             </div>
-            <div>
+            <div class="form-group">
                 <label for="password">رمز عبور:</label>
                 <input type="password" id="password" name="password" required autofocus>
             </div>

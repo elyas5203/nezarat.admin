@@ -1,194 +1,246 @@
 <?php
-// admin/parents/meetings.php (Now also handles class observations)
-require_once __DIR__ . '/../includes/header.php';
+require_once __DIR__ . '/../includes/header.php'; // General admin header
 
-$csrf_token_meetings = generate_csrf_token('meetings_general_action'); // Changed token name for broader scope
+$action = $_GET['action'] ?? 'list'; // list, create, edit, view_forms
+$meeting_id_url = isset($_GET['meeting_id']) ? (int)$_GET['meeting_id'] : 0; // Renamed to avoid conflict
+$class_id_filter_list = isset($_GET['class_id_filter']) ? (int)$_GET['class_id_filter'] : null;
 
-$errors_mtg = [];
-$edit_mode_mtg = false;
-$meeting_to_edit_values_default = [
-    'MeetingID' => null, 'MeetingName' => '', 'ClassID' => '',
-    'MeetingDate' => '', 'MeetingTime' => '', 'Location' => '',
-    'Speaker' => '', 'ObserverUserID' => null, 'Description' => '',
-    'Status' => 'planned', 'MeetingType' => 'parents_meeting' // Default type
-];
-$meeting_to_edit_values = $meeting_to_edit_values_default;
-
-$classes_q_mtg = $conn->query("SELECT ClassID, ClassName, AcademicYear FROM Classes WHERE IsActive = TRUE ORDER BY AcademicYear DESC, ClassName ASC");
-$available_classes_mtg = [];
-if ($classes_q_mtg) { while($c_mtg = $classes_q_mtg->fetch_assoc()) $available_classes_mtg[$c_mtg['ClassID']] = $c_mtg; $classes_q_mtg->close(); }
-
-$meeting_type_options_admin_display = [ // For display in select
-    'parents_meeting' => 'جلسه اولیا',
-    'class_observation_event' => 'بازدید کلاسی (نظارت)',
-    'other_meeting' => 'جلسه/رویداد دیگر' // Generic type
-];
-$meeting_status_options_admin_display = ['planned' => 'برنامه‌ریزی شده', 'confirmed' => 'قطعی شده', 'completed' => 'انجام شده', 'cancelled' => 'لغو شده'];
-$status_badge_map_mtg_display = ['planned' => 'primary', 'confirmed' => 'info', 'completed' => 'success', 'cancelled' => 'danger'];
-
-$observers_q_admin = $conn->query("SELECT UserID, FirstName, LastName, Username FROM Users WHERE IsActive = TRUE AND UserType IN ('admin', 'manager', 'deputy', 'teacher') ORDER BY LastName, FirstName"); // Example roles for observers
-$available_observers_admin = [];
-if ($observers_q_admin) { while($obs_admin = $observers_q_admin->fetch_assoc()) $available_observers_admin[$obs_admin['UserID']] = $obs_admin['FirstName'].' '.$obs_admin['LastName'] . ' (@'.$obs_admin['Username'].')'; $observers_q_admin->close(); }
-
-// Department ID: This might vary based on MeetingType. For 'parents_meeting', it's 'اولیا'. For 'class_observation_event', it might be 'نظارت' or general.
-// For simplicity, we might not strictly tie observations to a department via Meetings.DepartmentID, or use a general/null one.
-// Let's assume DepartmentID is optional for observations or handled differently.
-$parents_dept_id_val = null; /* ... fetch 'اولیا' department ID ... */
-$monitoring_dept_id_val = null; /* ... fetch 'نظارت' department ID ... */
-
-
-$filter_class_id_from_monitoring_page = isset($_GET['class_filter_id']) && is_numeric($_GET['class_filter_id']) ? (int)$_GET['class_filter_id'] : null;
-if ($filter_class_id_from_monitoring_page && $_SERVER["REQUEST_METHOD"] != "POST" && !$edit_mode_mtg) {
-    $meeting_to_edit_values['ClassID'] = $filter_class_id_from_monitoring_page;
-    // Auto-fill MeetingName based on default MeetingType and selected Class
-    if(isset($available_classes_mtg[$filter_class_id_from_monitoring_page])) {
-         $default_mt_text = $meeting_type_options_admin_display[$meeting_to_edit_values['MeetingType']] ?? 'جلسه';
-         $meeting_to_edit_values['MeetingName'] = $default_mt_text . ' کلاس ' . $available_classes_mtg[$filter_class_id_from_monitoring_page]['ClassName'];
-    }
-}
-
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit_meeting'])) {
-    if (!verify_csrf_token($_POST['csrf_token'] ?? '', 'meetings_general_action')) {
-        $errors_mtg[] = 'خطای CSRF!';
-    } else {
-        $meeting_id_post_val = isset($_POST['meeting_id']) && is_numeric($_POST['meeting_id']) ? (int)$_POST['meeting_id'] : null;
-
-        // Repopulate $meeting_to_edit_values with POST data
-        $meeting_to_edit_values['MeetingName'] = sanitize_input($_POST['MeetingName'] ?? '');
-        $meeting_to_edit_values['ClassID'] = isset($_POST['ClassID']) ? (int)$_POST['ClassID'] : null;
-        $meeting_to_edit_values['MeetingDate'] = sanitize_input($_POST['MeetingDate'] ?? '');
-        $meeting_to_edit_values['MeetingTime'] = sanitize_input($_POST['MeetingTime'] ?? '');
-        $meeting_to_edit_values['Location'] = sanitize_input($_POST['Location'] ?? '');
-        $meeting_to_edit_values['Speaker'] = sanitize_input($_POST['Speaker'] ?? '');
-        $meeting_to_edit_values['MeetingType'] = sanitize_input($_POST['MeetingType'] ?? 'parents_meeting');
-        $meeting_to_edit_values['ObserverUserID'] = (!empty($_POST['ObserverUserID']) && $meeting_to_edit_values['MeetingType'] === 'class_observation_event') ? (int)$_POST['ObserverUserID'] : null;
-        $meeting_to_edit_values['Description'] = sanitize_input($_POST['Description'] ?? '');
-        $meeting_to_edit_values['Status'] = sanitize_input($_POST['Status'] ?? 'planned');
-        if($meeting_id_post_val) $meeting_to_edit_values['MeetingID'] = $meeting_id_post_val;
-        $edit_mode_mtg = ($meeting_id_post_val !== null);
-
-        // Validation
-        if (empty($meeting_to_edit_values['MeetingName'])) $errors_mtg[] = "عنوان جلسه/بازدید الزامی است.";
-        if (empty($meeting_to_edit_values['ClassID']) || !isset($available_classes_mtg[$meeting_to_edit_values['ClassID']])) $errors_mtg[] = "کلاس نامعتبر.";
-        if (empty($meeting_to_edit_values['MeetingDate'])) $errors_mtg[] = "تاریخ الزامی است.";
-        // ... other validations for date, time, status, observer based on type ...
-        if (!array_key_exists($meeting_to_edit_values['MeetingType'], $meeting_type_options_admin_display)) $errors_mtg[] = "نوع جلسه/بازدید نامعتبر.";
-        if ($meeting_to_edit_values['MeetingType'] === 'class_observation_event' && $meeting_to_edit_values['ObserverUserID'] !== null && !isset($available_observers_admin[$meeting_to_edit_values['ObserverUserID']])) {
-            $errors_mtg[] = "بازدیدکننده انتخاب شده برای بازدید کلاسی نامعتبر است.";
-        }
-
-        $meeting_datetime_db_val = $meeting_to_edit_values['MeetingDate'];
-        // ... (Combine Date and Time into $meeting_datetime_db_val as before) ...
-
-        if (empty($errors_mtg)) {
-            // Determine DepartmentID based on MeetingType (simplified)
-            $department_id_for_meeting = null;
-            if ($meeting_to_edit_values['MeetingType'] === 'parents_meeting') $department_id_for_meeting = $parents_dept_id_val;
-            // For class_observation_event, DepartmentID might be null or a "Monitoring" department
-            // For 'other_meeting', it could be null or selected by admin.
-
-            if ($meeting_id_post_val) {
-                $stmt_db_mtg = $conn->prepare("UPDATE Meetings SET MeetingName=?, ClassID=?, MeetingDate=?, Location=?, Speaker=?, ObserverUserID=?, Description=?, Status=?, MeetingType=?, DepartmentID=? WHERE MeetingID=?");
-                if ($stmt_db_mtg) { $stmt_db_mtg->bind_param("sisssisssii", $meeting_to_edit_values['MeetingName'], $meeting_to_edit_values['ClassID'], $meeting_datetime_db_val, $meeting_to_edit_values['Location'], $meeting_to_edit_values['Speaker'], $meeting_to_edit_values['ObserverUserID'], $meeting_to_edit_values['Description'], $meeting_to_edit_values['Status'], $meeting_to_edit_values['MeetingType'], $department_id_for_meeting, $meeting_id_post_val);
-                    // ... (execute, set flash, redirect) ...
-                } // ...
-            } else {
-                $stmt_db_mtg = $conn->prepare("INSERT INTO Meetings (MeetingName, ClassID, MeetingDate, Location, Speaker, ObserverUserID, Description, Status, MeetingType, DepartmentID, CreatedAt, UpdatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())");
-                if ($stmt_db_mtg) { $stmt_db_mtg->bind_param("sisssisssi", $meeting_to_edit_values['MeetingName'], $meeting_to_edit_values['ClassID'], $meeting_datetime_db_val, $meeting_to_edit_values['Location'], $meeting_to_edit_values['Speaker'], $meeting_to_edit_values['ObserverUserID'], $meeting_to_edit_values['Description'], $meeting_to_edit_values['Status'], $meeting_to_edit_values['MeetingType'], $department_id_for_meeting);
-                    // ... (execute, set flash, redirect) ...
-                } // ...
-            }
-             if(empty($errors_mtg)) { /* ... redirect with flash ... */ }
-        }
-    }
-    $csrf_token_meetings = regenerate_csrf_token('meetings_general_action');
-}
-
-// ... (GET Edit/Delete logic - similar to before, but use $meeting_to_edit_values) ...
-if (isset($_GET['edit_id']) && is_numeric($_GET['edit_id']) && $_SERVER["REQUEST_METHOD"] != "POST") {
-    $edit_id_mtg_get = (int)$_GET['edit_id'];
-    $stmt_edit_mtg_get = $conn->prepare("SELECT * FROM Meetings WHERE MeetingID = ?");
-    if ($stmt_edit_mtg_get) {
-        $stmt_edit_mtg_get->bind_param("i", $edit_id_mtg_get); $stmt_edit_mtg_get->execute(); $result_edit_mtg_get = $stmt_edit_mtg_get->get_result();
-        if ($data_mtg_get = $result_edit_mtg_get->fetch_assoc()) {
-            $meeting_to_edit_values = $data_mtg_get;
-            if ($meeting_to_edit_values['MeetingDate']) { $dt_obj_edit_get = new DateTime($meeting_to_edit_values['MeetingDate']); $meeting_to_edit_values['MeetingDate'] = $dt_obj_edit_get->format('Y-m-d'); $meeting_to_edit_values['MeetingTime'] = $dt_obj_edit_get->format('H:i'); if ($meeting_to_edit_values['MeetingTime'] == '00:00') $meeting_to_edit_values['MeetingTime'] = '';}
-            $edit_mode_mtg = true;
-        } else $_SESSION['flash_message'] = ['type' => 'danger', 'text' => "مورد یافت نشد."];
-        $stmt_edit_mtg_get->close();
-    } else $_SESSION['flash_message'] = ['type' => 'danger', 'text' => "خطا بارگذاری: " . $conn->error];
-}
-
-
-// Fetch meetings for display
-$sql_meetings_list_admin_page = "SELECT m.*, c.ClassName, c.AcademicYear, CONCAT(u_obs.FirstName, ' ', u_obs.LastName) AS ObserverName FROM Meetings m JOIN Classes c ON m.ClassID = c.ClassID LEFT JOIN Users u_obs ON m.ObserverUserID = u_obs.UserID ";
-$params_meetings_list = []; $types_meetings_list = "";
-if ($filter_class_id_from_monitoring_page) { $sql_meetings_list_admin_page .= " WHERE m.ClassID = ?"; $params_meetings_list[] = $filter_class_id_from_monitoring_page; $types_meetings_list .= "i"; }
-$sql_meetings_list_admin_page .= " ORDER BY m.MeetingDate DESC LIMIT 100";
-$stmt_meetings_list = $conn->prepare($sql_meetings_list_admin_page);
 $meetings_list_display = [];
-if($stmt_meetings_list){ if(!empty($types_meetings_list)) $stmt_meetings_list->bind_param($types_meetings_list, ...$params_meetings_list); $stmt_meetings_list->execute(); $res_ml = $stmt_meetings_list->get_result(); while($ml_row = $res_ml->fetch_assoc()) $meetings_list_display[] = $ml_row; $stmt_meetings_list->close();}
+$meeting_data_for_form_display = null;
+$form_errors_parents_page = []; // Specific errors for this page
+$page_title_parents_page = "مدیریت جلسات اولیا";
 
-?>
-<div class="page-header"><h1>مدیریت جلسات و بازدیدها <?php /* ... filter display ... */ ?></h1>
-    <div class="page-header-actions"><a href="<?php echo $admin_base_url; ?>/monitoring/index.php" class="btn btn-outline-secondary">نظارت بر کلاس‌ها</a></div></div>
+// CSRF Tokens
+$csrf_token_name_parents_form = 'parents_meeting_form_action';
+$csrf_token_parents_form_val = generate_csrf_token($csrf_token_name_parents_form);
+$csrf_token_name_parents_delete = 'parents_meeting_delete_action';
+$csrf_token_parents_delete_val = generate_csrf_token($csrf_token_name_parents_delete);
 
-<?php /* ... Flash messages and errors ... */ ?>
-
-<div class="row"><div class="col-lg-5 mb-4"><div class="card shadow-sm">
-    <div class="card-header"><span class="card-title-text"><?php echo $edit_mode_mtg ? 'ویرایش' : 'افزودن جدید'; ?></span></div><div class="card-body">
-    <form action="meetings.php<?php /* ... action URL ... */ ?>" method="POST">
-        <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_meetings; ?>">
-        <?php if ($edit_mode_mtg && $meeting_to_edit_values['MeetingID']): ?><input type="hidden" name="meeting_id" value="<?php echo $meeting_to_edit_values['MeetingID']; ?>"><?php endif; ?>
-
-        <div class="form-group"><label for="MeetingType_admin_form_id">نوع <span class="text-danger">*</span></label><select name="MeetingType" id="MeetingType_admin_form_id" class="form-control custom-select" required onchange="toggleObserverFieldAdmin(this.value)">
-            <?php foreach($meeting_type_options_admin_display as $mt_key_form => $mt_val_form): ?><option value="<?php echo $mt_key_form; ?>" <?php if($meeting_to_edit_values['MeetingType'] == $mt_key_form) echo 'selected';?>><?php echo $mt_val_form; ?></option><?php endforeach; ?></select></div>
-
-        <div class="form-group"><label for="meeting_name_mtg_form_id">عنوان <span class="text-danger">*</span></label><input type="text" class="form-control" id="meeting_name_mtg_form_id" name="MeetingName" value="<?php echo htmlspecialchars($meeting_to_edit_values['MeetingName']); ?>" required></div>
-        <div class="form-group"><label for="class_id_mtg_form_page">کلاس <span class="text-danger">*</span></label><select name="ClassID" id="class_id_mtg_form_page" class="form-control custom-select" required <?php if($filter_class_id_from_monitoring_page && !$edit_mode_mtg) echo "disabled"; ?>>
-            <option value="">-- انتخاب --</option><?php foreach($available_classes_mtg as $cls_id_m_form => $cls_m_data_form): ?><option value="<?php echo $cls_id_m_form; ?>" <?php if($meeting_to_edit_values['ClassID'] == $cls_id_m_form) echo 'selected';?>><?php echo htmlspecialchars($cls_m_data_form['ClassName'] . ' (' . $cls_m_data_form['AcademicYear'] . ')'); ?></option><?php endforeach; ?></select>
-            <?php if($filter_class_id_from_monitoring_page && !$edit_mode_mtg): ?> <input type="hidden" name="ClassID" value="<?php echo $filter_class_id_from_monitoring_page; ?>"> <?php endif; ?></div>
-
-        <div class="form-row"><div class="form-group col-md-7"><label for="meeting_date_mtg_page">تاریخ <span class="text-danger">*</span></label><input type="text" class="form-control persian-date-picker" id="meeting_date_mtg_page" name="MeetingDate" value="<?php echo htmlspecialchars($meeting_to_edit_values['MeetingDate']); ?>" placeholder="YYYY-MM-DD" required></div><div class="form-group col-md-5"><label for="meeting_time_mtg_page">زمان</label><input type="time" class="form-control" id="meeting_time_mtg_page" name="MeetingTime" value="<?php echo htmlspecialchars($meeting_to_edit_values['MeetingTime']); ?>"></div></div>
-
-        <div class="form-group" id="observer_field_group_admin" style="<?php echo ($meeting_to_edit_values['MeetingType'] ?? '') === 'class_observation_event' ? 'display:block;' : 'display:none;'; ?>">
-            <label for="ObserverUserID_admin_form_id">بازدیدکننده/ناظر</label><select name="ObserverUserID" id="ObserverUserID_admin_form_id" class="form-control custom-select"><option value="">-- انتخاب --</option><?php foreach($available_observers_admin as $obs_id_form => $obs_name_form): ?><option value="<?php echo $obs_id_form; ?>" <?php if(($meeting_to_edit_values['ObserverUserID'] ?? null) == $obs_id_form) echo 'selected';?>><?php echo htmlspecialchars($obs_name_form);?></option><?php endforeach; ?></select></div>
-
-        <div class="form-group speaker_field_group_admin" style="<?php echo ($meeting_to_edit_values['MeetingType'] ?? '') === 'parents_meeting' ? 'display:block;' : 'display:none;'; ?>"><label for="speaker_mtg_form_id">سخنران</label><input type="text" class="form-control" id="speaker_mtg_form_id" name="Speaker" value="<?php echo htmlspecialchars($meeting_to_edit_values['Speaker']); ?>"></div>
-        <div class="form-group"><label for="location_mtg_form_id">مکان</label><input type="text" class="form-control" id="location_mtg_form_id" name="Location" value="<?php echo htmlspecialchars($meeting_to_edit_values['Location']); ?>"></div>
-        <div class="form-group"><label for="description_mtg_form_page">توضیحات</label><textarea class="form-control" id="description_mtg_form_page" name="Description" rows="2"><?php echo htmlspecialchars($meeting_to_edit_values['Description']); ?></textarea></div>
-        <div class="form-group"><label for="status_mtg_form_page">وضعیت <span class="text-danger">*</span></label><select name="Status" id="status_mtg_form_page" class="form-control custom-select" required><?php foreach($meeting_status_options_admin_display as $s_key_m_form => $s_val_m_form): ?><option value="<?php echo $s_key_m_form; ?>" <?php if($meeting_to_edit_values['Status'] == $s_key_m_form) echo 'selected';?>><?php echo $s_val_m_form; ?></option><?php endforeach; ?></select></div>
-        <div class="form-actions"><button type="submit" name="submit_meeting" class="btn btn-primary"><?php echo $edit_mode_mtg ? 'ذخیره' : 'ایجاد'; ?></button><?php if ($edit_mode_mtg): ?><a href="meetings.php<?php if($filter_class_id_from_monitoring_page) echo '?class_filter_id='.$filter_class_id_from_monitoring_page; ?>" class="btn btn-outline-secondary">لغو</a><?php endif; ?></div>
-    </form></div></div></div>
-    <div class="col-lg-7"><div class="card shadow-sm"><div class="card-header"><span class="card-title-text">لیست جلسات و بازدیدها <?php /* ... filter display ... */ ?></span></div><div class="card-body">
-    <?php if (!empty($meetings_list_display)): ?><div class="table-responsive"><table class="table table-sm table-striped table-hover">
-        <thead><tr><th>#</th><th>عنوان/نوع</th><th>کلاس</th><th>تاریخ</th><th>بازدیدکننده/سخنران</th><th>وضعیت</th><th>گزارش‌ها</th><th>عملیات</th></tr></thead><tbody>
-        <?php $mtg_row_idx_disp = 1; foreach ($meetings_list_display as $mtg_item_disp): ?><tr>
-            <td><?php echo $mtg_row_idx_disp++; ?></td>
-            <td><strong><?php echo htmlspecialchars($mtg_item_disp['MeetingName']); ?></strong><small class="d-block text-info font-weight-bold"><?php echo $meeting_type_options_admin_display[$mtg_item_disp['MeetingType']] ?? $mtg_item_disp['MeetingType'];?></small></td>
-            <td><?php echo htmlspecialchars($mtg_item_disp['ClassName']); ?> <small>(<?php echo $mtg_item_disp['AcademicYear'];?>)</small></td>
-            <td><?php echo to_jalali($mt_item_disp['MeetingDate'], 'yyyy/MM/dd HH:mm'); ?></td>
-            <td><small><?php echo $mtg_item_disp['MeetingType'] === 'class_observation_event' ? htmlspecialchars($mtg_item_disp['ObserverName'] ?? '-') : htmlspecialchars($mtg_item_disp['Speaker'] ?? '-'); ?></small></td>
-            <td><span class="badge badge-<?php echo $status_badge_map_mtg_display[$mtg_item_disp['Status']] ?? 'light'; ?> p-2"><?php echo $meeting_status_options_admin_display[$mtg_item_disp['Status']] ?? $mtg_item_disp['Status']; ?></span></td>
-            <td><?php /* ... Report links based on MeetingType and Status ... */ ?></td>
-            <td class="actions-cell"> <!-- Edit/Delete buttons --> </td></tr><?php endforeach; ?></tbody></table></div>
-    <?php else: ?><p class="text-muted text-center">موردی یافت نشد.</p><?php endif; ?>
-    </div></div></div></div>
-<link rel="stylesheet" href="https://unpkg.com/persian-datepicker@latest/dist/css/persian-datepicker.min.css"/>
-<script src="https://unpkg.com/persian-datepicker@latest/dist/js/persian-datepicker.min.js"></script>
-<script type="text/javascript">
-function toggleObserverFieldAdmin(meetingType) {
-    const observerGroup = document.getElementById('observer_field_group_admin');
-    const speakerGroup = document.querySelector('.speaker_field_group_admin'); // Assuming class for speaker group
-    if (observerGroup) observerGroup.style.display = (meetingType === 'class_observation_event') ? 'block' : 'none';
-    if (speakerGroup) speakerGroup.style.display = (meetingType === 'parents_meeting' || meetingType === 'other_meeting') ? 'block' : 'none'; // Show speaker for parents or other
-    // Auto-suggest MeetingName (optional improvement)
+// Fetch available classes for dropdowns
+$available_classes_parents_dd = [];
+if($conn){
+    $res_classes_dd = $conn->query("SELECT ClassID, ClassName, AcademicYear FROM Classes ORDER BY AcademicYear DESC, ClassName ASC");
+    if($res_classes_dd) while($row_dd = $res_classes_dd->fetch_assoc()) $available_classes_parents_dd[] = $row_dd;
+    else $form_errors_parents_page['fetch_classes'] = "خطا بارگذاری کلاس‌ها: " . $conn->error;
+} else {
+    $form_errors_parents_page['db_conn'] = "خطا اتصال دیتابیس.";
 }
-document.addEventListener('DOMContentLoaded', function() {
-    const initialMeetingTypeCtrl = document.getElementById('MeetingType_admin_form_id');
-    if(initialMeetingTypeCtrl) toggleObserverFieldAdmin(initialMeetingTypeCtrl.value);
-    /* ... datepicker and alert init ... */
+
+$meeting_statuses_display = ['planned' => 'برنامه‌ریزی شده', 'completed' => 'برگزار شده', 'cancelled' => 'لغو شده', 'postponed' => 'به تعویق افتاده'];
+// Badge classes for meeting statuses
+if (!function_exists('get_meeting_status_badge_class')) { // Prevent re-declaration if moved to global helpers
+    function get_meeting_status_badge_class($status_key) {
+        switch (strtolower($status_key ?? '')) {
+            case 'completed': return 'success';
+            case 'planned': return 'primary';
+            case 'cancelled': return 'danger';
+            case 'postponed': return 'warning text-dark';
+            default: return 'secondary';
+        }
+    }
+}
+
+
+// Handle POST for create/edit/delete
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['save_meeting'])) {
+        if (!verify_csrf_token($_POST['csrf_token'] ?? '', $csrf_token_name_parents_form)) {
+            $form_errors_parents_page['csrf'] = "خطای CSRF.";
+        } else {
+            $csrf_token_parents_form_val = regenerate_csrf_token($csrf_token_name_parents_form);
+            $meeting_id_posted_form = isset($_POST['meeting_id']) ? (int)$_POST['meeting_id'] : 0;
+
+            $class_id_fk_form = isset($_POST['class_id']) ? (int)$_POST['class_id'] : null;
+            $meeting_date_jalali_form = sanitize_input($_POST['meeting_date'] ?? '');
+            $meeting_time_form = sanitize_input($_POST['meeting_time'] ?? null);
+            $location_form = sanitize_input($_POST['location'] ?? null);
+            $agenda_form = sanitize_input($_POST['agenda'] ?? null);
+            $status_form = sanitize_input($_POST['status'] ?? 'planned');
+            $observer_form_sub_id_form = !empty($_POST['observer_form_submission_id']) ? (int)$_POST['observer_form_submission_id'] : null;
+            $teacher_form_sub_id_form = !empty($_POST['teacher_form_submission_id']) ? (int)$_POST['teacher_form_submission_id'] : null;
+
+            $meeting_data_for_form_display = $_POST;
+            $meeting_data_for_form_display['MeetingDate'] = $meeting_date_jalali_form;
+
+            if (!$class_id_fk_form) $form_errors_parents_page['class_id'] = "انتخاب کلاس الزامی است.";
+            if (empty($meeting_date_jalali_form)) $form_errors_parents_page['meeting_date'] = "تاریخ جلسه الزامی است.";
+            $meeting_date_gregorian_form = null;
+            if(!empty($meeting_date_jalali_form)){
+                $meeting_date_gregorian_form = to_gregorian_date_for_db($meeting_date_jalali_form);
+                if(!$meeting_date_gregorian_form) $form_errors_parents_page['meeting_date'] = "فرمت تاریخ نامعتبر.";
+            }
+            if (!empty($meeting_time_form) && !preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/', $meeting_time_form)) $form_errors_parents_page['meeting_time'] = "فرمت ساعت نامعتبر."; else if(empty($meeting_time_form)) $meeting_time_form = null;
+
+            if (empty($form_errors_parents_page)) {
+                if ($conn) {
+                    if ($meeting_id_posted_form > 0) { // Update
+                        $stmt_pm_update = $conn->prepare("UPDATE ParentsMeetings SET ClassID=?, MeetingDate=?, MeetingTime=?, Location=?, Agenda=?, Status=?, ObserverFormSubmissionID=?, TeacherFormSubmissionID=?, UpdatedAt=NOW(), UpdatedByUserID=? WHERE MeetingID=?");
+                        if($stmt_pm_update){
+                            $current_admin_id_pm_update = get_current_user_id();
+                            $stmt_pm_update->bind_param("isssssiiii", $class_id_fk_form, $meeting_date_gregorian_form, $meeting_time_form, $location_form, $agenda_form, $status_form, $observer_form_sub_id_form, $teacher_form_sub_id_form, $current_admin_id_pm_update, $meeting_id_posted_form);
+                            if ($stmt_pm_update->execute()) { $_SESSION['action_success_parents'] = "جلسه اولیا بروزرسانی شد."; header("Location: meetings.php"); exit; }
+                            else $form_errors_parents_page['db'] = "خطا در بروزرسانی: " . $stmt_pm_update->error;
+                            $stmt_pm_update->close();
+                        } else $form_errors_parents_page['db'] = "خطای آماده سازی بروزرسانی: " . $conn->error;
+                    } else { // Create
+                        $stmt_pm_create = $conn->prepare("INSERT INTO ParentsMeetings (ClassID, MeetingDate, MeetingTime, Location, Agenda, Status, ObserverFormSubmissionID, TeacherFormSubmissionID, CreatedAt, CreatedByUserID) VALUES (?,?,?,?,?,?,?,?,NOW(),?)");
+                        if($stmt_pm_create){
+                            $current_admin_id_pm_create = get_current_user_id();
+                            $stmt_pm_create->bind_param("isssssiii", $class_id_fk_form, $meeting_date_gregorian_form, $meeting_time_form, $location_form, $agenda_form, $status_form, $observer_form_sub_id_form, $teacher_form_sub_id_form, $current_admin_id_pm_create);
+                            if ($stmt_pm_create->execute()) { $_SESSION['action_success_parents'] = "جلسه اولیا ایجاد شد."; header("Location: meetings.php"); exit; }
+                            else $form_errors_parents_page['db'] = "خطا در ایجاد: " . $stmt_pm_create->error;
+                            $stmt_pm_create->close();
+                        } else $form_errors_parents_page['db'] = "خطای آماده سازی ایجاد: " . $conn->error;
+                    }
+                } else $form_errors_parents_page['db'] = "عدم اتصال به پایگاه داده.";
+            }
+            $action = ($meeting_id_posted_form > 0) ? 'edit' : 'create';
+        }
+    }  elseif (isset($_POST['delete_meeting_confirmed'])) {
+        if (!verify_csrf_token($_POST['csrf_token_delete_modal_pm'] ?? '', $csrf_token_name_parents_delete)) {
+            $_SESSION['action_error_parents'] = "خطای CSRF.";
+        } else {
+            $csrf_token_parents_delete_val = regenerate_csrf_token($csrf_token_name_parents_delete);
+            $meeting_id_to_delete_confirmed = (int)($_POST['meeting_id_to_delete_confirmed'] ?? 0);
+            if ($meeting_id_to_delete_confirmed > 0 && $conn) {
+                $stmt_del_pm = $conn->prepare("DELETE FROM ParentsMeetings WHERE MeetingID = ?");
+                if($stmt_del_pm){
+                    $stmt_del_pm->bind_param("i", $meeting_id_to_delete_confirmed);
+                    if ($stmt_del_pm->execute()) { $_SESSION['action_success_parents'] = ($stmt_del_pm->affected_rows > 0) ? "جلسه حذف شد." : "جلسه یافت نشد."; }
+                    else $_SESSION['action_error_parents'] = "خطا در حذف: " . $stmt_del_pm->error;
+                    $stmt_del_pm->close();
+                } else $_SESSION['action_error_parents'] = "خطای آماده سازی حذف: " . $conn->error;
+            } else $_SESSION['action_error_parents'] = "شناسه نامعتبر.";
+        }
+        header("Location: meetings.php" . ($class_id_filter_list ? "?class_id_filter=".$class_id_filter_list : "")); exit;
+    }
+}
+
+
+if ($conn) {
+    if ($action === 'list') {
+        $page_title_parents_page = "لیست جلسات اولیا";
+        $sql_list_pm_page = "SELECT pm.MeetingID, pm.MeetingDate, pm.Status, pm.ObserverFormSubmissionID, pm.TeacherFormSubmissionID, c.ClassName, c.AcademicYear
+                        FROM ParentsMeetings pm
+                        JOIN Classes c ON pm.ClassID = c.ClassID
+                        WHERE 1=1 ";
+        $params_list_pm_page = []; $types_list_pm_page = "";
+        if($class_id_filter_list){
+            $sql_list_pm_page .= " AND pm.ClassID = ?";
+            $params_list_pm_page[] = $class_id_filter_list; $types_list_pm_page .= "i";
+        }
+        $sql_list_pm_page .= " ORDER BY pm.MeetingDate DESC";
+
+        $stmt_list_pm_page = $conn->prepare($sql_list_pm_page);
+        if($stmt_list_pm_page){
+            if(!empty($params_list_pm_page)) $stmt_list_pm_page->bind_param($types_list_pm_page, ...$params_list_pm_page);
+            if($stmt_list_pm_page->execute()){ $result_list_pm_page = $stmt_list_pm_page->get_result(); while($row_pm=$result_list_pm_page->fetch_assoc()) $meetings_list_display[]=$row_pm; }
+            else $form_errors_parents_page['db_list'] = "خطا بارگذاری لیست: " . $stmt_list_pm_page->error;
+            $stmt_list_pm_page->close();
+        } else $form_errors_parents_page['db_list'] = "خطای آماده سازی لیست: " . $conn->error;
+
+    } elseif (($action === 'edit' || $action === 'create') && !$meeting_data_for_form_display) {
+        if ($action === 'edit' && $meeting_id_url > 0) {
+            $page_title_parents_page = "ویرایش جلسه اولیا";
+            $stmt_pm_edit_page = $conn->prepare("SELECT * FROM ParentsMeetings WHERE MeetingID = ?");
+            if($stmt_pm_edit_page){
+                $stmt_pm_edit_page->bind_param("i", $meeting_id_url); $stmt_pm_edit_page->execute();
+                $result_pm_edit_page = $stmt_pm_edit_page->get_result();
+                if (!($meeting_data_for_form_display = $result_pm_edit_page->fetch_assoc())) { $_SESSION['action_error_parents'] = "جلسه یافت نشد."; header("Location: meetings.php"); exit; }
+                if (!empty($meeting_data_for_form_display['MeetingDate'])) { $meeting_data_for_form_display['MeetingDate'] = to_jalali($meeting_data_for_form_display['MeetingDate'], 'yyyy/MM/dd'); }
+                $stmt_pm_edit_page->close();
+            } else $form_errors_parents_page['db_load'] = "خطا بارگذاری: " . $conn->error;
+        } else { // create
+            $page_title_parents_page = "ایجاد جلسه اولیا جدید";
+            $default_class_id = $class_id_filter_list ?: null; // Pre-select class if filtered
+            $meeting_data_for_form_display = ['ClassID'=>$default_class_id, 'MeetingDate'=>to_jalali(date('Y-m-d'),'yyyy/MM/dd'), 'MeetingTime'=>'16:00', 'Location'=>'', 'Agenda'=>'', 'Status'=>'planned', 'ObserverFormSubmissionID'=>null, 'TeacherFormSubmissionID'=>null];
+        }
+    }
+} else {
+    $form_errors_parents_page['db_connection_page'] = "خطا در اتصال به پایگاه داده.";
+}
+?>
+<div class="page-header">
+    <h1><?php echo $page_title_parents_page; ?></h1>
+    <div class="page-header-actions">
+        <a href="meetings.php?action=<?php echo ($action==='list'?'create':'list') . ($class_id_filter_list ? '&class_id_filter='.$class_id_filter_list : ''); ?>" class="btn btn-<?php echo ($action==='list'?'primary':'secondary');?>"><em class="bi <?php echo ($action==='list'?'bi-calendar2-plus':'bi-list-ul');?> icon"></em> <?php echo ($action==='list'?'ایجاد جلسه جدید':'لیست جلسات');?></a>
+        <a href="<?php echo $admin_base_url; ?>/dashboard/index.php" class="btn btn-outline-secondary ms-2"><em class="bi bi-house-door icon"></em> داشبورد</a>
+    </div>
+</div>
+
+<?php if(isset($_SESSION['action_success_parents'])):?><div class="alert alert-success alert-dismissible fade show"><button class="btn-close" data-bs-dismiss="alert"></button><?php echo $_SESSION['action_success_parents']; unset($_SESSION['action_success_parents']);?></div><?php endif;?>
+<?php if(isset($_SESSION['action_error_parents'])):?><div class="alert alert-danger alert-dismissible fade show"><button class="btn-close" data-bs-dismiss="alert"></button><?php echo $_SESSION['action_error_parents']; unset($_SESSION['action_error_parents']);?></div><?php endif;?>
+<?php if(!empty($form_errors_parents_page)):?><div class="alert alert-danger alert-dismissible fade show"><strong>خطا:</strong><ul class="mb-0 ps-3"><?php foreach($form_errors_parents_page as $e_key_p=>$e_msg_p):echo "<li>".htmlspecialchars($e_msg_p)."</li>";endforeach;?></ul><button class="btn-close" data-bs-dismiss="alert"></button></div><?php endif;?>
+
+<?php if($action === 'list'): ?>
+    <div class="filter-search-bar mb-3"><form method="GET" class="row g-2 align-items-center">
+        <div class="col-md-6"><label for="class_id_filter_list_page" class="form-label visually-hidden">فیلتر کلاس:</label><select name="class_id_filter" id="class_id_filter_list_page" class="form-select form-select-sm"><option value="">نمایش جلسات همه کلاس‌ها</option><?php foreach($available_classes_parents_dd as $cls_f):?><option value="<?php echo $cls_f['ClassID'];?>" <?php echo (($class_id_filter_list??0)==$cls_f['ClassID'])?'selected':'';?>><?php echo htmlspecialchars($cls_f['ClassName'].' ('.$cls_f['AcademicYear'].')');?></option><?php endforeach;?></select></div>
+        <div class="col-md-auto"><button type="submit" class="btn btn-info btn-sm">اعمال فیلتر</button></div>
+        <?php if($class_id_filter_list):?><div class="col-md-auto"><a href="meetings.php" class="btn btn-secondary btn-sm">پاک کردن فیلتر</a></div><?php endif;?>
+    </form></div>
+    <div class="card"><div class="card-body">
+    <?php if(empty($meetings_list_display)): ?><p class="text-center text-muted py-3">هیچ جلسه‌ای یافت نشد. <?php if(!$class_id_filter_list) echo '<a href="?action=create">یک جلسه جدید ایجاد کنید</a>.';?></p>
+    <?php else: ?><div class="table-responsive"><table class="table table-hover table-sm">
+        <thead class="table-light"><tr><th>#</th><th>کلاس</th><th>تاریخ جلسه</th><th>وضعیت</th><th>گزارش ناظر</th><th>گزارش مدرس</th><th class="actions-column">عملیات</th></tr></thead>
+        <tbody><?php foreach($meetings_list_display as $idx_m_l => $m_l): ?>
+            <tr><td><?php echo $idx_m_l+1;?></td><td><?php echo htmlspecialchars($m_l['ClassName'].' ('.$m_l['AcademicYear'].')');?></td><td><?php echo to_jalali($m_l['MeetingDate'],'yyyy/MM/dd');?></td><td><span class="badge bg-<?php echo get_meeting_status_badge_class($m_l['Status']);?>"><?php echo $meeting_statuses_display[$m_l['Status']]??$m_l['Status'];?></span></td>
+            <td><?php echo $m_l['ObserverFormSubmissionID'] ? '<a href="'.$admin_base_url.'/forms/view_submission.php?submission_id='.$m_l['ObserverFormSubmissionID'].'" target="_blank" title="مشاهده گزارش ناظر"><em class="bi bi-check-circle-fill text-success"></em> ثبت شده</a>' : '<em class="bi bi-x-circle-fill text-danger"></em> ندارد';?></td>
+            <td><?php echo $m_l['TeacherFormSubmissionID'] ? '<a href="'.$admin_base_url.'/forms/view_submission.php?submission_id='.$m_l['TeacherFormSubmissionID'].'" target="_blank" title="مشاهده گزارش مدرس"><em class="bi bi-check-circle-fill text-success"></em> ثبت شده</a>' : '<em class="bi bi-x-circle-fill text-danger"></em> ندارد';?></td>
+            <td class="actions-cell">
+                <a href="?action=edit&meeting_id=<?php echo $m_l['MeetingID'].($class_id_filter_list ? '&class_id_filter='.$class_id_filter_list : '');?>" class="btn btn-sm btn-outline-info" title="ویرایش"><em class="bi bi-pencil-square"></em></a>
+                <button type="button" class="btn btn-sm btn-outline-danger btn-delete-pm" data-meeting-id="<?php echo $m_l['MeetingID'];?>" data-meeting-desc="<?php echo htmlspecialchars($m_l['ClassName'].' - '.to_jalali($m_l['MeetingDate'],'yy/MM/dd'));?>"><em class="bi bi-trash3"></em></button>
+            </td></tr>
+        <?php endforeach; ?></tbody>
+    </table></div><?php endif; ?>
+    </div></div>
+<?php elseif ($action === 'create' || $action === 'edit'): ?>
+    <div class="card"><div class="card-body">
+        <form method="POST" action="meetings.php<?php echo ($action==='edit'&&$meeting_id_url)?'?action=edit&meeting_id='.$meeting_id_url:'?action=create';?>" novalidate>
+            <input type="hidden" name="csrf_token" value="<?php echo $csrf_token_parents_form_val; ?>">
+            <?php if($action==='edit'&&$meeting_id_url):?><input type="hidden" name="meeting_id" value="<?php echo $meeting_id_url;?>"><?php endif;?>
+            <div class="row">
+                <div class="col-md-6 mb-3"><label for="pm_f_class" class="form-label">کلاس مربوطه <span class="text-danger">*</span></label><select class="form-select <?php echo isset($form_errors_parents_page['class_id'])?'is-invalid':'';?>" id="pm_f_class" name="class_id" required><option value="">-- انتخاب کلاس --</option><?php foreach($available_classes_parents_dd as $cls_opt_f):?><option value="<?php echo $cls_opt_f['ClassID'];?>" <?php echo (($meeting_data_for_form_display['ClassID']??null)==$cls_opt_f['ClassID'])?'selected':'';?>><?php echo htmlspecialchars($cls_opt_f['ClassName'].' ('.$cls_opt_f['AcademicYear'].')');?></option><?php endforeach;?></select><?php if(isset($form_errors_parents_page['class_id'])):?><div class="invalid-feedback"><?php echo $form_errors_parents_page['class_id'];?></div><?php endif;?></div>
+                <div class="col-md-6 mb-3"><label for="pm_f_status" class="form-label">وضعیت جلسه <span class="text-danger">*</span></label><select class="form-select" id="pm_f_status" name="status" required><?php foreach($meeting_statuses_display as $msk_f=>$msv_f):?><option value="<?php echo $msk_f;?>" <?php echo (($meeting_data_for_form_display['Status']??'planned')===$msk_f)?'selected':'';?>><?php echo $msv_f;?></option><?php endforeach;?></select></div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3"><label for="pm_f_date" class="form-label">تاریخ جلسه <span class="text-danger">*</span></label><input type="text" class="form-control persian-datepicker <?php echo isset($form_errors_parents_page['meeting_date'])?'is-invalid':'';?>" id="pm_f_date" name="meeting_date" value="<?php echo htmlspecialchars($meeting_data_for_form_display['MeetingDate']??'');?>" required><?php if(isset($form_errors_parents_page['meeting_date'])):?><div class="invalid-feedback"><?php echo $form_errors_parents_page['meeting_date'];?></div><?php endif;?></div>
+                <div class="col-md-6 mb-3"><label for="pm_f_time" class="form-label">ساعت جلسه</label><input type="time" class="form-control <?php echo isset($form_errors_parents_page['meeting_time'])?'is-invalid':'';?>" id="pm_f_time" name="meeting_time" value="<?php echo htmlspecialchars($meeting_data_for_form_display['MeetingTime']??'');?>"><?php if(isset($form_errors_parents_page['meeting_time'])):?><div class="invalid-feedback"><?php echo $form_errors_parents_page['meeting_time'];?></div><?php endif;?></div>
+            </div>
+            <div class="mb-3"><label for="pm_f_loc" class="form-label">مکان جلسه</label><input type="text" class="form-control" id="pm_f_loc" name="location" value="<?php echo htmlspecialchars($meeting_data_for_form_display['Location']??'');?>"></div>
+            <div class="mb-3"><label for="pm_f_agenda" class="form-label">دستور جلسه / موضوعات</label><textarea class="form-control" id="pm_f_agenda" name="agenda" rows="3"><?php echo htmlspecialchars($meeting_data_for_form_display['Agenda']??'');?></textarea></div>
+            <fieldset class="border p-3 mb-3"><legend class="w-auto px-2 small">فرم‌های گزارش (اختیاری)</legend>
+            <p class="text-muted small mb-2">شناسه پاسخ فرم‌های گزارش ناظر و مدرس را (پس از ثبت آنها در بخش فرم‌ها) در اینجا وارد کنید.</p>
+            <div class="row">
+                <div class="col-md-6 mb-3"><label for="pm_f_obs_form" class="form-label">شناسه پاسخ گزارش ناظر</label><input type="number" class="form-control" id="pm_f_obs_form" name="observer_form_submission_id" value="<?php echo htmlspecialchars($meeting_data_for_form_display['ObserverFormSubmissionID']??'');?>" placeholder="مثال: 123"></div>
+                <div class="col-md-6 mb-3"><label for="pm_f_teach_form" class="form-label">شناسه پاسخ گزارش مدرس</label><input type="number" class="form-control" id="pm_f_teach_form" name="teacher_form_submission_id" value="<?php echo htmlspecialchars($meeting_data_for_form_display['TeacherFormSubmissionID']??'');?>" placeholder="مثال: 124"></div>
+            </div></fieldset>
+            <div class="form-actions"><button type="submit" name="save_meeting" class="btn btn-success"><em class="bi bi-check-circle-fill icon"></em> ذخیره جلسه</button><a href="meetings.php<?php echo ($class_id_filter_list ? "?class_id_filter=".$class_id_filter_list : ""); ?>" class="btn btn-outline-secondary">انصراف</a></div>
+        </form>
+    </div></div>
+<?php endif; ?>
+
+<div class="modal fade" id="deleteParentMeetingModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+    <form method="POST" action="meetings.php<?php echo ($class_id_filter_list ? "?class_id_filter=".$class_id_filter_list : ""); ?>" id="deleteParentMeetingFormModal">
+    <input type="hidden" name="csrf_token_delete_modal_pm" id="csrf_token_delete_modal_pm_input_val" value="">
+    <input type="hidden" name="meeting_id_to_delete_confirmed" id="meeting_id_to_delete_modal_input_val_pm">
+    <div class="modal-header"><h5 class="modal-title">تایید حذف جلسه اولیا</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">آیا از حذف جلسه <strong id="parentMeetingDescToDeleteModalVal"></strong> مطمئن هستید؟</div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button><button type="submit" name="delete_meeting_confirmed" class="btn btn-danger">حذف</button></div>
+    </form></div></div></div>
+
+<link rel="stylesheet" href="<?php echo get_base_url(); ?>assets/js/persian-datepicker/persian-datepicker.min.css"/>
+<script src="<?php echo get_base_url(); ?>assets/js/jquery.min.js"></script>
+<script src="<?php echo get_base_url(); ?>assets/js/persian-datepicker/persian-date.min.js"></script>
+<script src="<?php echo get_base_url(); ?>assets/js/persian-datepicker/persian-datepicker.min.js"></script>
+<script>
+$(document).ready(function(){
+    if($(".persian-datepicker").length){$(".persian-datepicker").persianDatepicker({format:'YYYY/MM/DD',autoClose:true,observer:true,initialValue:false});}
+    $('.btn-delete-pm').on('click',function(){
+        $('#meeting_id_to_delete_modal_input_val_pm').val($(this).data('meeting-id'));
+        $('#parentMeetingDescToDeleteModalVal').text($(this).data('meeting-desc'));
+        $('#csrf_token_delete_modal_pm_input_val').val('<?php echo $csrf_token_parents_delete_val;?>');
+        new bootstrap.Modal(document.getElementById('deleteParentMeetingModal')).show();
+    });
 });
 </script>
-<style>/* ... styles ... */</style>
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>
