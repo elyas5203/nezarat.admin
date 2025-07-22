@@ -24,11 +24,12 @@ class WooCommerceApp:
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # لیست محصولات
-        self.products_tree = ttk.Treeview(main_frame, columns=("id", "name", "price", "stock"), show="headings")
+        self.products_tree = ttk.Treeview(main_frame, columns=("id", "name", "price", "stock", "status"), show="headings")
         self.products_tree.heading("id", text="شناسه")
         self.products_tree.heading("name", text="نام محصول")
         self.products_tree.heading("price", text="قیمت")
         self.products_tree.heading("stock", text="موجودی")
+        self.products_tree.heading("status", text="وضعیت")
         self.products_tree.grid(row=0, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # دکمه‌ها
@@ -67,7 +68,8 @@ class WooCommerceApp:
                 self.products_tree.delete(item)
             for product in products:
                 stock = product.get('stock_quantity', 'N/A')
-                self.products_tree.insert("", "end", values=(product["id"], product["name"], product["price"], stock))
+                status = "موجود" if product.get('in_stock', True) else "ناموجود"
+                self.products_tree.insert("", "end", values=(product["id"], product["name"], product["price"], stock, status))
         except Exception as e:
             messagebox.showerror("خطا", f"خطا در بارگیری محصولات: {e}")
 
@@ -122,23 +124,31 @@ class WooCommerceApp:
             entry.grid(row=i, column=1, padx=10, pady=5)
             entries[label_text] = entry
 
+        # In Stock Checkbox
+        in_stock_var = tk.BooleanVar()
+        in_stock_check = ttk.Checkbutton(window, text="موجود", variable=in_stock_var)
+        in_stock_check.grid(row=len(labels), column=0, padx=10, pady=5, sticky=tk.W)
+
+
         # Populate entries for editing
         if mode == "edit":
             entries["نام محصول:"].insert(0, product_data.get("name", ""))
             entries["قیمت:"].insert(0, product_data.get("price", ""))
             entries["موجودی:"].insert(0, product_data.get("stock_quantity", ""))
+            in_stock_var.set(product_data.get("in_stock", True))
 
 
         # Save Button
-        save_button = ttk.Button(window, text="ذخیره", command=lambda: self.save_product(mode, entries, product_data.get("id"), window))
-        save_button.grid(row=len(labels), column=0, columnspan=2, pady=10)
+        save_button = ttk.Button(window, text="ذخیره", command=lambda: self.save_product(mode, entries, in_stock_var, product_data.get("id"), window))
+        save_button.grid(row=len(labels) + 1, column=0, columnspan=2, pady=10)
 
-    def save_product(self, mode, entries, product_id, window):
+    def save_product(self, mode, entries, in_stock_var, product_id, window):
         data = {
             "name": entries["نام محصول:"].get(),
             "regular_price": entries["قیمت:"].get(),
             "stock_quantity": entries["موجودی:"].get(),
-            "manage_stock": True
+            "manage_stock": True,
+            "in_stock": in_stock_var.get()
         }
 
         try:
